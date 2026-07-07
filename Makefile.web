@@ -1,0 +1,47 @@
+# Makefile.web — WebAssembly build for hex-magical (Emscripten + raylib PLATFORM_WEB)
+
+PROJECT_NAME = hex-magical
+RAYLIB_VERSION = 6.0
+RAYLIB_ROOT = external/raylib
+RAYLIB_SRC = $(RAYLIB_ROOT)/src
+SRC_DIR = src
+BUILD_DIR = bin/wasm
+RESOURCES_DIR = src/resources
+SHELL_HTML = $(SRC_DIR)/shell.html
+
+CC = emcc
+
+CFLAGS = -Os -Wall -std=gnu99 -D_DEFAULT_SOURCE -Wno-missing-braces -Wno-unused-value -Wno-pointer-sign -DPLATFORM_WEB
+CFLAGS += -I$(SRC_DIR) -I$(RAYLIB_SRC) -I$(RAYLIB_SRC)/external
+
+LDFLAGS = -L$(RAYLIB_SRC) -lraylib.web
+LDFLAGS += -s USE_GLFW=3 -s WASM=1 -s TOTAL_MEMORY=128MB -s STACK_SIZE=1MB -s FORCE_FILESYSTEM=1 -s MINIFY_HTML=0
+LDFLAGS += --preload-file $(RESOURCES_DIR)@/resources
+LDFLAGS += --shell-file $(SHELL_HTML)
+
+SRCS = $(SRC_DIR)/raylib_game.c
+
+.PHONY: all clean vendor-raylib
+
+vendor-raylib:
+	@if [ ! -d "$(RAYLIB_ROOT)" ]; then \
+		echo "Fetching raylib $(RAYLIB_VERSION)..."; \
+		git clone --depth 1 --branch $(RAYLIB_VERSION) https://github.com/raysan5/raylib $(RAYLIB_ROOT); \
+	fi
+
+all: vendor-raylib $(BUILD_DIR)/index.html
+
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
+
+$(RAYLIB_SRC)/libraylib.web.a: vendor-raylib
+	@echo "Building Raylib for Web..."
+	$(MAKE) -C $(RAYLIB_SRC) PLATFORM=PLATFORM_WEB RAYLIB_LIBTYPE=STATIC
+
+$(BUILD_DIR)/index.html: $(SRCS) $(SHELL_HTML) $(RAYLIB_SRC)/libraylib.web.a | $(BUILD_DIR)
+	@echo "Building $(PROJECT_NAME) for Web..."
+	$(CC) -o $@ $(SRCS) $(CFLAGS) $(LDFLAGS)
+
+clean:
+	rm -rf $(BUILD_DIR)
+	@if [ -d "$(RAYLIB_SRC)" ]; then $(MAKE) -C "$(RAYLIB_SRC)" clean; fi
