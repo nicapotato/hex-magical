@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug.DLL|Win32">
@@ -359,10 +359,16 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\src\raylib_game.c" />
+    <ClCompile Include="..\..\..\src\main.c" />
+    <ClCompile Include="..\..\..\src\game.c" />
+    <ClCompile Include="..\..\..\src\platform.c" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="..\..\..\src\raylib_game.rc" />
+    <ClInclude Include="..\..\..\src\game.h" />
+    <ClInclude Include="..\..\..\src\platform.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="..\..\..\src\platform\raylib_game.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

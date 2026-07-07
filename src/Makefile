@@ -32,7 +32,7 @@ PLATFORM              ?= PLATFORM_DESKTOP
 PROJECT_NAME          ?= raylib_game
 PROJECT_VERSION       ?= 1.0
 PROJECT_BUILD_PATH    ?= .
-PROJECT_SOURCE_FILES  ?= raylib_game.c
+PROJECT_SOURCE_FILES  ?= main.c game.c platform.c
 
 # raylib library variables
 RAYLIB_PATH           ?= C:/raylib/raylib
@@ -50,7 +50,7 @@ BUILD_MODE            ?= RELEASE
 
 # PLATFORM_WEB: Default properties
 BUILD_WEB_ASYNCIFY    ?= FALSE
-BUILD_WEB_SHELL       ?= minshell.html
+BUILD_WEB_SHELL       ?= platform/minshell.html
 BUILD_WEB_HEAP_SIZE   ?= 128MB
 BUILD_WEB_STACK_SIZE  ?= 1MB
 BUILD_WEB_ASYNCIFY_STACK_SIZE ?= 1048576
@@ -324,7 +324,7 @@ OBJS = $(patsubst %.c, %.o, $(PROJECT_SOURCE_FILES))
 #------------------------------------------------------------------------------------------------
 # For Android platform we call a custom Makefile.Android
 ifeq ($(PLATFORM),PLATFORM_ANDROID)
-    MAKEFILE_TARGET = -f Makefile.Android
+    MAKEFILE_TARGET = -f platform/Makefile.Android
     export PROJECT_NAME
     export PROJECT_SOURCE_FILES
 else

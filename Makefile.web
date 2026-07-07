@@ -7,7 +7,7 @@ RAYLIB_SRC = $(RAYLIB_ROOT)/src
 SRC_DIR = src
 BUILD_DIR = bin/wasm
 RESOURCES_DIR = src/resources
-SHELL_HTML = $(SRC_DIR)/shell.html
+SHELL_HTML = $(SRC_DIR)/platform/shell.html
 
 CC = emcc
 
@@ -19,7 +19,7 @@ LDFLAGS += -s USE_GLFW=3 -s WASM=1 -s TOTAL_MEMORY=128MB -s STACK_SIZE=1MB -s FO
 LDFLAGS += --preload-file $(RESOURCES_DIR)@/resources
 LDFLAGS += --shell-file $(SHELL_HTML)
 
-SRCS = $(SRC_DIR)/raylib_game.c
+SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/game.c $(SRC_DIR)/platform.c
 
 .PHONY: all clean vendor-raylib
 

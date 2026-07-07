@@ -24,7 +24,7 @@ jobs:
       PROJECT_REPO_NAME: ${{ github.event.repository.name }}
       PROJECT_BUILD_PATH: ${{ github.event.repository.name }}\\src
       PROJECT_RELEASE_PATH: ${{ github.event.repository.name }}_dev_wasm
-      BUILD_WEB_SHELL: minshell.html
+      BUILD_WEB_SHELL: platform/minshell.html
 
     steps:
     - name: Checkout this repo
