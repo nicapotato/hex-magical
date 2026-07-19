@@ -12,7 +12,7 @@ int main(void)
 
     // Initialization
     //--------------------------------------------------------------------------------------
-    InitWindow(GAME_SCREEN_WIDTH, GAME_SCREEN_HEIGHT, "raylib gamejam template");
+    InitWindow(GAME_SCREEN_WIDTH, GAME_SCREEN_HEIGHT, "hex-magical — crayon physics");
 
     GameInit();
     //--------------------------------------------------------------------------------------

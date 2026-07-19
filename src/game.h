@@ -17,13 +17,10 @@
 // Types and Structures Definition
 //----------------------------------------------------------------------------------
 typedef enum {
-    SCREEN_LOGO = 0,
-    SCREEN_TITLE,
-    SCREEN_GAMEPLAY,
-    SCREEN_ENDING
+    SCREEN_TITLE = 0,
+    SCREEN_PLAYING,
+    SCREEN_WIN
 } GameScreen;
-
-// TODO: Define your custom data types here
 
 //----------------------------------------------------------------------------------
 // Module Functions Declaration

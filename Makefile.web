@@ -1,9 +1,13 @@
-# Makefile.web — WebAssembly build for hex-magical (Emscripten + raylib PLATFORM_WEB)
+# Makefile.web — WebAssembly build for hex-magical (Emscripten + raylib PLATFORM_WEB + Box2D)
 
 PROJECT_NAME = hex-magical
 RAYLIB_VERSION = 6.0
+BOX2D_VERSION = v3.1.1
 RAYLIB_ROOT = external/raylib
 RAYLIB_SRC = $(RAYLIB_ROOT)/src
+BOX2D_ROOT = external/box2d
+BOX2D_SRC = $(BOX2D_ROOT)/src
+BOX2D_INC = $(BOX2D_ROOT)/include
 SRC_DIR = src
 BUILD_DIR = bin/wasm
 RESOURCES_DIR = src/resources
@@ -11,17 +15,63 @@ SHELL_HTML = $(SRC_DIR)/platform/shell.html
 
 CC = emcc
 
-CFLAGS = -Os -Wall -std=gnu99 -D_DEFAULT_SOURCE -Wno-missing-braces -Wno-unused-value -Wno-pointer-sign -DPLATFORM_WEB
+CFLAGS = -Os -Wall -std=gnu17 -D_DEFAULT_SOURCE -Wno-missing-braces -Wno-unused-value -Wno-pointer-sign -DPLATFORM_WEB
 CFLAGS += -I$(SRC_DIR) -I$(RAYLIB_SRC) -I$(RAYLIB_SRC)/external
+CFLAGS += -I$(BOX2D_INC) -I$(BOX2D_SRC) -DBOX2D_DISABLE_SIMD -ffp-contract=off
 
 LDFLAGS = -L$(RAYLIB_SRC) -lraylib.web
 LDFLAGS += -s USE_GLFW=3 -s WASM=1 -s TOTAL_MEMORY=128MB -s STACK_SIZE=1MB -s FORCE_FILESYSTEM=1 -s MINIFY_HTML=0
 LDFLAGS += --preload-file $(RESOURCES_DIR)@/resources
 LDFLAGS += --shell-file $(SHELL_HTML)
 
-SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/game.c $(SRC_DIR)/platform.c
+GAME_SRCS = \
+	$(SRC_DIR)/main.c \
+	$(SRC_DIR)/game.c \
+	$(SRC_DIR)/platform.c \
+	$(SRC_DIR)/physics.c \
+	$(SRC_DIR)/sketch.c \
+	$(SRC_DIR)/render.c
 
-.PHONY: all clean vendor-raylib
+BOX2D_SRCS = \
+	$(BOX2D_SRC)/aabb.c \
+	$(BOX2D_SRC)/arena_allocator.c \
+	$(BOX2D_SRC)/array.c \
+	$(BOX2D_SRC)/bitset.c \
+	$(BOX2D_SRC)/body.c \
+	$(BOX2D_SRC)/broad_phase.c \
+	$(BOX2D_SRC)/constraint_graph.c \
+	$(BOX2D_SRC)/contact.c \
+	$(BOX2D_SRC)/contact_solver.c \
+	$(BOX2D_SRC)/core.c \
+	$(BOX2D_SRC)/distance.c \
+	$(BOX2D_SRC)/distance_joint.c \
+	$(BOX2D_SRC)/dynamic_tree.c \
+	$(BOX2D_SRC)/geometry.c \
+	$(BOX2D_SRC)/hull.c \
+	$(BOX2D_SRC)/id_pool.c \
+	$(BOX2D_SRC)/island.c \
+	$(BOX2D_SRC)/joint.c \
+	$(BOX2D_SRC)/manifold.c \
+	$(BOX2D_SRC)/math_functions.c \
+	$(BOX2D_SRC)/motor_joint.c \
+	$(BOX2D_SRC)/mouse_joint.c \
+	$(BOX2D_SRC)/mover.c \
+	$(BOX2D_SRC)/prismatic_joint.c \
+	$(BOX2D_SRC)/revolute_joint.c \
+	$(BOX2D_SRC)/sensor.c \
+	$(BOX2D_SRC)/shape.c \
+	$(BOX2D_SRC)/solver.c \
+	$(BOX2D_SRC)/solver_set.c \
+	$(BOX2D_SRC)/table.c \
+	$(BOX2D_SRC)/timer.c \
+	$(BOX2D_SRC)/types.c \
+	$(BOX2D_SRC)/weld_joint.c \
+	$(BOX2D_SRC)/wheel_joint.c \
+	$(BOX2D_SRC)/world.c
+
+SRCS = $(GAME_SRCS) $(BOX2D_SRCS)
+
+.PHONY: all clean vendor-raylib vendor-box2d
 
 vendor-raylib:
 	@if [ ! -d "$(RAYLIB_ROOT)" ]; then \
@@ -29,7 +79,14 @@ vendor-raylib:
 		git clone --depth 1 --branch $(RAYLIB_VERSION) https://github.com/raysan5/raylib $(RAYLIB_ROOT); \
 	fi
 
-all: vendor-raylib $(BUILD_DIR)/index.html
+vendor-box2d:
+	@if [ ! -d "$(BOX2D_ROOT)/src" ]; then \
+		echo "Fetching box2d $(BOX2D_VERSION)..."; \
+		rm -rf $(BOX2D_ROOT); \
+		git clone --depth 1 --branch $(BOX2D_VERSION) https://github.com/erincatto/box2d $(BOX2D_ROOT); \
+	fi
+
+all: vendor-raylib vendor-box2d $(BUILD_DIR)/index.html
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)

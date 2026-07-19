@@ -2,7 +2,7 @@
 
 BUILD_DIR := build
 WEB_DIR := build-web
-PROJECT := raylib-game-template
+PROJECT := hex-magical
 BINARY := $(BUILD_DIR)/$(PROJECT)/$(PROJECT)
 
 WASM_BUILD_DIR := bin/wasm
