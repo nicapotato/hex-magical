@@ -114,7 +114,7 @@ help:
 #   make ci PLATFORM=macos
 #   make ci PLATFORM=windows VERSION=0.0.2
 # Requires: gh (https://cli.github.com/), authenticated (`gh auth login`).
-ci:
+hex-magical-ci:
 	gh workflow run "$(HEX_MAGICAL_WORKFLOW)" \
 		$(if $(REF),-r "$(REF)",) \
 		-f build_platform="$(PLATFORM)" \
@@ -127,7 +127,7 @@ ci:
 #   make release
 #   make release REF=main
 #   make release VERSION=0.0.2
-release:
+hex-magical-release:
 	@V=$${VERSION:-$$(grep '^VERSION=' project.conf | cut -d= -f2)}; \
 		echo "🚀 Dispatching release for v$${V} (publish_gh_release=true → creates git tag)"; \
 	gh workflow run "$(HEX_MAGICAL_WORKFLOW)" \
@@ -137,13 +137,13 @@ release:
 		$(if $(VERSION),-f version="$(VERSION)",) \
 		$(if $(CHANNEL),-f channel="$(CHANNEL)",)
 
-ci-watch: ci
+hex-magical-ci-watch: ci
 	@sleep 2
 	@RID=$$(gh run list --workflow="$(HEX_MAGICAL_WORKFLOW)" -L 1 --json databaseId -q '.[0].databaseId'); \
 		test -n "$$RID"; \
 		gh run watch "$$RID"
 
-release-watch: release
+hex-magical-release-watch: release
 	@sleep 2
 	@RID=$$(gh run list --workflow="$(HEX_MAGICAL_WORKFLOW)" -L 1 --json databaseId -q '.[0].databaseId'); \
 		test -n "$$RID"; \
