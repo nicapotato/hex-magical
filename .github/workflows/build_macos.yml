@@ -5,6 +5,9 @@ on:
   push:
     paths:
       - 'src/**'
+      - 'CMakeLists.txt'
+      - 'makefile'
+      - 'Makefile.web'
       - '.github/workflows/build_macos.yml'
   release:
     types: [published]
@@ -39,6 +42,14 @@ jobs:
       with:
         repository: raysan5/raylib
         path: raylib
+        ref: 6.0
+
+    - name: Checkout box2d repo
+      uses: actions/checkout@master
+      with:
+        repository: erincatto/box2d
+        path: box2d
+        ref: v3.1.1
 
     - name: Setup Release Paths
       run: |
@@ -92,16 +103,18 @@ jobs:
         cd ${{ env.PROJECT_REPO_NAME }}/src
 
         # Build project x86_64 binary
-        # TODO: Link with x86_64 raylib library: libraylib_x86_64.a
-        make PLATFORM=PLATFORM_DESKTOP BUILD_MODE=RELEASE PROJECT_CUSTOM_FLAGS=${{ env.PROJECT_CUSTOM_FLAGS }} PROJECT_BUILD_PATH=. RAYLIB_PATH=../../raylib PROJECT_CUSTOM_FLAGS="-target x86_64-apple-macos10.12"
+        make PLATFORM=PLATFORM_DESKTOP BUILD_MODE=RELEASE PROJECT_BUILD_PATH=. \
+          RAYLIB_PATH=../../raylib BOX2D_PATH=../../box2d \
+          PROJECT_CUSTOM_FLAGS="-target x86_64-apple-macos10.12"
         mv -v -f ${{ env.PROJECT_NAME }} ${{ env.PROJECT_NAME }}_x86_64
-        make clean
+        make clean PLATFORM=PLATFORM_DESKTOP
 
         # Build project arm64 binary
-        # TODO: Link with arm64 raylib library: libraylib_arm.a
-        make PLATFORM=PLATFORM_DESKTOP BUILD_MODE=RELEASE PROJECT_CUSTOM_FLAGS=${{ env.PROJECT_CUSTOM_FLAGS }} PROJECT_BUILD_PATH=. RAYLIB_PATH=../../raylib PROJECT_CUSTOM_FLAGS="-target arm64-apple-macos11"
+        make PLATFORM=PLATFORM_DESKTOP BUILD_MODE=RELEASE PROJECT_BUILD_PATH=. \
+          RAYLIB_PATH=../../raylib BOX2D_PATH=../../box2d \
+          PROJECT_CUSTOM_FLAGS="-target arm64-apple-macos11"
         mv -v -f ${{ env.PROJECT_NAME }} ${{ env.PROJECT_NAME }}_arm64
-        make clean
+        make clean PLATFORM=PLATFORM_DESKTOP
 
         # Join x86_64 and arm64 binaries
         lipo -create -output ${{ env.PROJECT_NAME }} ${{ env.PROJECT_NAME }}_x86_64 ${{ env.PROJECT_NAME }}_arm64

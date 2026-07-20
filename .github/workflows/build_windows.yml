@@ -5,6 +5,9 @@ on:
   push:
     paths:
       - 'src/**'
+      - 'CMakeLists.txt'
+      - 'makefile'
+      - 'Makefile.web'
       - '.github/workflows/build_windows.yml'
   release:
     types: [published]
@@ -18,11 +21,10 @@ jobs:
       contents: write       # Required for actions/upload-release-asset to upload release asset
     runs-on: windows-latest
 
-    # WARNING: Project (internal) name could not be the same as repository name
     env:
-      PROJECT_NAME: raylib_game
+      PROJECT_NAME: hex-magical
       PROJECT_REPO_NAME: ${{ github.event.repository.name }}
-      PROJECT_BUILD_PATH: "${{ github.event.repository.name }}\\projects\\VS2022\\build\\raylib_game\\bin\\x64\\Release"
+      PROJECT_BUILD_PATH: ${{ github.event.repository.name }}/build/hex-magical/Release
       PROJECT_RELEASE_PATH: ${{ github.event.repository.name }}_dev_win_x64
       PROJECT_RESOURCES_SRC_PATH: src\resources
       PROJECT_RESOURCES_DST_PATH: resources
@@ -32,15 +34,7 @@ jobs:
       uses: actions/checkout@master
       with:
         path: ${{ env.PROJECT_REPO_NAME }}
-      
-    - name: Checkout raylib repo
-      uses: actions/checkout@master
-      with:
-        repository: raysan5/raylib
-        path: raylib
 
-    # NOTE: Visual Studio project build configuration already defines all required directories where project is generated:
-    # $(SolutionDir)\build\$(ProjectName)\bin\$(Platform)\$(Configuration)\
     - name: Setup Release Paths
       run: |
         echo "PROJECT_RELEASE_PATH=${{ env.PROJECT_NAME }}_v${{ github.event.release.tag_name }}_win_x64" >> $GITHUB_ENV
@@ -53,28 +47,35 @@ jobs:
         dir
       shell: cmd
 
-    # Setup MSBuild.exe path if required
-    - name: Setup MSBuild path
-      uses: microsoft/setup-msbuild@v3
-
-    - name: Build raylib Library + Product (VS2022 solution)
+    - name: Build Product (CMake + FetchContent raylib/box2d)
       run: |
-        dir
-        cd ${{ env.PROJECT_REPO_NAME }}/projects/VS2022
-        msbuild.exe ${{ env.PROJECT_NAME }}.sln /target:${{ env.PROJECT_NAME }} /property:Configuration=Release /property:Platform=x64 /property:RaylibSrcPath="..\..\..\..\raylib\src"
-        cd ../..
+        cd ${{ env.PROJECT_REPO_NAME }}
+        cmake -B build -DCMAKE_BUILD_TYPE=Release
+        cmake --build build --config Release --parallel
+        dir build\hex-magical
+        dir build\hex-magical\Release
       shell: cmd
 
     - name: Generate Artifacts
+      shell: bash
       run: |
-        dir ${{ env.PROJECT_BUILD_PATH }}
-        copy /Y ${{ env.PROJECT_BUILD_PATH }}\${{ env.PROJECT_NAME }}.exe ${{ env.PROJECT_RELEASE_PATH }}\${{ env.PROJECT_NAME }}.exe
-        xcopy ${{ env.PROJECT_REPO_NAME }}\${{ env.PROJECT_RESOURCES_SRC_PATH }} ${{ env.PROJECT_RELEASE_PATH }}\${{ env.PROJECT_RESOURCES_DST_PATH }} /s /e /i
-        copy /Y ${{ env.PROJECT_REPO_NAME }}\README.md ${{ env.PROJECT_RELEASE_PATH }}\README.md
-        copy /Y ${{ env.PROJECT_REPO_NAME }}\LICENSE ${{ env.PROJECT_RELEASE_PATH }}\LICENSE
-        dir ${{ env.PROJECT_RELEASE_PATH }}
-        7z a .\${{ env.PROJECT_RELEASE_PATH }}.zip .\${{ env.PROJECT_RELEASE_PATH }}
-      shell: cmd
+        set -euo pipefail
+        EXE=""
+        for candidate in \
+          "${{ env.PROJECT_REPO_NAME }}/build/hex-magical/Release/hex-magical.exe" \
+          "${{ env.PROJECT_REPO_NAME }}/build/hex-magical/hex-magical.exe" \
+          "${{ env.PROJECT_REPO_NAME }}/build/Release/hex-magical.exe"
+        do
+          if [ -f "$candidate" ]; then EXE="$candidate"; break; fi
+        done
+        test -n "$EXE"
+        echo "Using binary: $EXE"
+        cp "$EXE" "${{ env.PROJECT_RELEASE_PATH }}/${{ env.PROJECT_NAME }}.exe"
+        cp -r "${{ env.PROJECT_REPO_NAME }}/src/resources" "${{ env.PROJECT_RELEASE_PATH }}/resources"
+        cp "${{ env.PROJECT_REPO_NAME }}/README.md" "${{ env.PROJECT_RELEASE_PATH }}/README.md"
+        cp "${{ env.PROJECT_REPO_NAME }}/LICENSE" "${{ env.PROJECT_RELEASE_PATH }}/LICENSE"
+        ls -la "${{ env.PROJECT_RELEASE_PATH }}"
+        7z a "./${{ env.PROJECT_RELEASE_PATH }}.zip" "./${{ env.PROJECT_RELEASE_PATH }}"
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v7

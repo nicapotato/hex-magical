@@ -5,6 +5,9 @@ on:
   push:
     paths:
       - 'src/**'
+      - 'CMakeLists.txt'
+      - 'makefile'
+      - 'Makefile.web'
       - '.github/workflows/build_linux.yml'
   release:
     types: [published]
@@ -39,7 +42,15 @@ jobs:
       with:
         repository: raysan5/raylib
         path: raylib
-        
+        ref: 6.0
+
+    - name: Checkout box2d repo
+      uses: actions/checkout@master
+      with:
+        repository: erincatto/box2d
+        path: box2d
+        ref: v3.1.1
+
     - name: Setup Release Paths
       run: |
         echo "PROJECT_VERSION=${{ github.event.release.tag_name }}" >> $GITHUB_ENV
@@ -64,7 +75,9 @@ jobs:
     - name: Build Product
       run: |
         cd ${{ env.PROJECT_REPO_NAME }}/src
-        make PLATFORM=PLATFORM_DESKTOP BUILD_MODE=RELEASE PROJECT_CUSTOM_FLAGS=${{ env.PROJECT_CUSTOM_FLAGS }} PROJECT_BUILD_PATH=. RAYLIB_PATH=../../raylib
+        make PLATFORM=PLATFORM_DESKTOP BUILD_MODE=RELEASE PROJECT_BUILD_PATH=. \
+          RAYLIB_PATH=../../raylib BOX2D_PATH=../../box2d \
+          PROJECT_CUSTOM_FLAGS=${{ env.PROJECT_CUSTOM_FLAGS }}
 
     - name: Generate Artifacts
       run: |
