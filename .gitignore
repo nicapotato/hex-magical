@@ -83,3 +83,7 @@ android.*
 !src/platform/minshell.html
 !src/platform/shell.html
 !Makefile.web
+
+# macOS
+.DS_Store
+**/.DS_Store

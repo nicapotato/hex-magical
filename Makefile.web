@@ -71,7 +71,7 @@ BOX2D_SRCS = \
 
 SRCS = $(GAME_SRCS) $(BOX2D_SRCS)
 
-.PHONY: all clean vendor-raylib vendor-box2d
+.PHONY: all clean package vendor-raylib vendor-box2d
 
 vendor-raylib:
 	@if [ ! -d "$(RAYLIB_ROOT)" ]; then \
@@ -98,6 +98,12 @@ $(RAYLIB_SRC)/libraylib.web.a: vendor-raylib
 $(BUILD_DIR)/index.html: $(SRCS) $(SHELL_HTML) $(RAYLIB_SRC)/libraylib.web.a | $(BUILD_DIR)
 	@echo "Building $(PROJECT_NAME) for Web..."
 	$(CC) -o $@ $(SRCS) $(CFLAGS) $(LDFLAGS)
+
+# Zip for GitHub Release / S3 (itch butler pushes the exploded bin/wasm/ dir)
+package: all
+	@echo "Packaging WASM zip..."
+	cd $(BUILD_DIR) && zip -r hex-magical_wasm.zip index.html index.js index.wasm index.data
+	@echo "Package ready: $(BUILD_DIR)/hex-magical_wasm.zip"
 
 clean:
 	rm -rf $(BUILD_DIR)
