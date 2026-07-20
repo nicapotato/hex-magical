@@ -75,9 +75,7 @@ jobs:
     - name: Build Product
       run: |
         cd ${{ env.PROJECT_REPO_NAME }}/src
-        make PLATFORM=PLATFORM_DESKTOP BUILD_MODE=RELEASE PROJECT_BUILD_PATH=. \
-          RAYLIB_PATH=../../raylib BOX2D_PATH=../../box2d \
-          PROJECT_CUSTOM_FLAGS=${{ env.PROJECT_CUSTOM_FLAGS }}
+        make PLATFORM=PLATFORM_DESKTOP BUILD_MODE=RELEASE PROJECT_BUILD_PATH=. RAYLIB_PATH=../../raylib BOX2D_PATH=../../box2d PROJECT_CUSTOM_FLAGS="${{ env.PROJECT_CUSTOM_FLAGS }}"
 
     - name: Generate Artifacts
       run: |

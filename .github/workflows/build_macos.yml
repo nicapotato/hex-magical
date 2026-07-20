@@ -102,19 +102,15 @@ jobs:
       run: |
         cd ${{ env.PROJECT_REPO_NAME }}/src
 
-        # Build project x86_64 binary
-        make PLATFORM=PLATFORM_DESKTOP BUILD_MODE=RELEASE PROJECT_BUILD_PATH=. \
-          RAYLIB_PATH=../../raylib BOX2D_PATH=../../box2d \
-          PROJECT_CUSTOM_FLAGS="-target x86_64-apple-macos10.12"
+        # Build project x86_64 binary (only wipe .o files — keep renamed arch binaries for lipo)
+        make PLATFORM=PLATFORM_DESKTOP BUILD_MODE=RELEASE PROJECT_BUILD_PATH=. RAYLIB_PATH=../../raylib BOX2D_PATH=../../box2d PROJECT_CUSTOM_FLAGS="-target x86_64-apple-macos10.12"
         mv -v -f ${{ env.PROJECT_NAME }} ${{ env.PROJECT_NAME }}_x86_64
-        make clean PLATFORM=PLATFORM_DESKTOP
+        rm -f *.o box2d_*.o
 
         # Build project arm64 binary
-        make PLATFORM=PLATFORM_DESKTOP BUILD_MODE=RELEASE PROJECT_BUILD_PATH=. \
-          RAYLIB_PATH=../../raylib BOX2D_PATH=../../box2d \
-          PROJECT_CUSTOM_FLAGS="-target arm64-apple-macos11"
+        make PLATFORM=PLATFORM_DESKTOP BUILD_MODE=RELEASE PROJECT_BUILD_PATH=. RAYLIB_PATH=../../raylib BOX2D_PATH=../../box2d PROJECT_CUSTOM_FLAGS="-target arm64-apple-macos11"
         mv -v -f ${{ env.PROJECT_NAME }} ${{ env.PROJECT_NAME }}_arm64
-        make clean PLATFORM=PLATFORM_DESKTOP
+        rm -f *.o box2d_*.o
 
         # Join x86_64 and arm64 binaries
         lipo -create -output ${{ env.PROJECT_NAME }} ${{ env.PROJECT_NAME }}_x86_64 ${{ env.PROJECT_NAME }}_arm64

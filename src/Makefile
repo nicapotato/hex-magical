@@ -374,7 +374,7 @@ ifeq ($(PLATFORM),PLATFORM_DESKTOP)
 	rm -fv *.o box2d_*.o
     endif
     ifeq ($(PLATFORM_OS),OSX)
-	rm -f *.o box2d_*.o external/*.o $(PROJECT_NAME) $(PROJECT_NAME)_x86_64 $(PROJECT_NAME)_arm64
+	rm -f *.o box2d_*.o external/*.o $(PROJECT_NAME)
     endif
 endif
 ifeq ($(PLATFORM),PLATFORM_RPI)

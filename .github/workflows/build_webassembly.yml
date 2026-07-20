@@ -74,8 +74,9 @@ jobs:
         make PLATFORM=PLATFORM_WEB RAYLIB_BUILD_MODE=RELEASE RAYLIB_LIBTYPE=STATIC EMSDK_PATH="D:/a/${{ env.PROJECT_REPO_NAME }}/${{ env.PROJECT_REPO_NAME }}/emsdk-cache/emsdk-main" RAYLIB_RELEASE_PATH=. -B
 
     - name: Build Product
+      shell: bash
       run: |
-        cd ${{ env.PROJECT_REPO_NAME }}/src
+        cd "${{ env.PROJECT_REPO_NAME }}/src"
         make PLATFORM=PLATFORM_WEB BUILD_MODE=RELEASE \
           EMSDK_PATH="D:/a/${{ env.PROJECT_REPO_NAME }}/${{ env.PROJECT_REPO_NAME }}/emsdk-cache/emsdk-main" \
           PROJECT_BUILD_PATH=. RAYLIB_PATH=../../raylib BOX2D_PATH=../../box2d -B
