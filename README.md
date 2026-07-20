@@ -1,93 +1,96 @@
------------------------------------
-_DISCLAIMER:_
+# hex-magical
 
-Welcome to the **raylib game template**!
+[![Release](https://img.shields.io/badge/release-v0.0.1-blue)](https://github.com/nicapotato/hex-magical/releases/tag/v0.0.1)
 
-This template provides a base structure to start developing a small raylib game in plain C. The repo is also pre-configured with a default `LICENSE` (zlib/libpng) and a `README.md` (this one) to be properly filled by users. Feel free to change the LICENSE as required.
+## hex-magical v0.0.1
 
-All the sections defined by `$(Data to Fill)` are expected to be edited and filled properly. It's recommended to delete this disclaimer message after editing this `README.md` file.
+Build status and downloads for the pinned version in [`project.conf`](project.conf). Update this section when bumping `VERSION`.
 
-## Getting Started with this template
+| Platform | Build | Download |
+|----------|-------|----------|
+| Web (WASM) | ![Web WASM](https://img.shields.io/badge/web%20wasm-pending-lightgrey) | [hex-magical_wasm.zip](https://github.com/nicapotato/hex-magical/releases/download/v0.0.1/hex-magical_wasm.zip) |
+| macOS | ![macOS](https://img.shields.io/badge/macos-pending-lightgrey) | [hex-magical-macos.zip](https://github.com/nicapotato/hex-magical/releases/download/v0.0.1/hex-magical-macos.zip) |
+| Windows x64 | ![Windows x64](https://img.shields.io/badge/windows%20x64-pending-lightgrey) | [hex-magical-windows.zip](https://github.com/nicapotato/hex-magical/releases/download/v0.0.1/hex-magical-windows.zip) |
 
-### Windows: Visual Studio
+A Crayon Physics Deluxe–style drawing puzzle in C + raylib 6.0 + Box2D 3.1.
 
-- After extracting the zip, the parent folder `raylib-game-template` should exist in the same directory as `raylib` itself.  So, your file structure should look like this:
-    - Some parent directory
-        - `raylib`
-            - the contents of https://github.com/raysan5/raylib
-        - `raylib-game-template`
-            - this `README.md` and all other raylib-game-template files
-- If using Visual Studio, open projects/VS2022/raylib-game-template.sln
-- Select on `raylib_game` in the solution explorer, then in the toolbar at the top, click `Project` > `Set as Startup Project`
-- Now you're all set up!  Click `Local Windows Debugger` with the green play arrow and the project will run.
+Draw rigid crayon shapes with the mouse, then guide the red ball to the star.
 
-#### Linux
+## Controls
 
-When setting up this template on linux for the first time, install the dependencies from this page:
-([Working on GNU Linux](https://github.com/raysan5/raylib/wiki/Working-on-GNU-Linux))
+- **LMB drag** — draw a shape (stays frozen until you drop the ball)
+- **RMB** — erase a drawn shape under the cursor
+- **START / Enter** — drop the ball and enable gravity
+- **R** — restart current level (back to build phase)
+- **1 / 2 / 3** — jump to level
+- **Space / click** — enter from title, or advance after a win
+- **D / DEBUG** — toggle physics collider overlay
 
-You can use this templates in a few ways: using Visual Studio, using CMake, or make your own build setup. This repository comes with Visual Studio and CMake already set up.
+## Levels (hard-coded)
 
-Chose one of the follow setup options that fit in you development environment.
+1. **Gap** — bridge two plateaus
+2. **Climb** — ramp the ball up to a high ledge
+3. **Pit** — fling the ball out of a well onto a shelf
 
-### CLI: Makefile
+## Build
 
-```sh
-mkdir ~/raylib-gamejam && cd ~/raylib-gamejam
-git clone --depth 1 --branch 6.0 https://github.com/raysan5/raylib
-make -C raylib/src
-git clone https://github.com/$(User Name)/$(Repo Name).git
-cd $(Repo Name)
-make -C src
-src/raylib_game
+### Desktop (macOS)
+
+```bash
+make build      # cmake + Box2D FetchContent + link
+make run-mac
 ```
 
-This template has been created to be used with raylib (www.raylib.com) and it's licensed under an unmodified zlib/libpng license.
+### Web (Emscripten)
 
-_Copyright (c) 2014-2026 Ramon Santamaria ([@raysan5](https://github.com/raysan5))_
------------------------------------
+```bash
+make build-wasm   # vendors raylib + box2d into external/, emits hex-magical.zip
+make run-wasm     # serves at http://localhost:8000/
+```
 
-## $(Game Title)
+Requires `emcc` on PATH. First web build clones raylib 6.0 and Box2D v3.1.1 under `external/`.
 
-![$(Game Title)](screenshots/screenshot000.png "$(Game Title)")
+## CI/CD
 
-### Description
+Unified workflow: [`.github/workflows/hex-magical-cicd.yml`](.github/workflows/hex-magical-cicd.yml)
 
-$(Your Game Description)
+| Trigger | Behavior |
+|---------|----------|
+| `make release` | Dispatch all platforms → itch + S3 + **GitHub Release** (creates `v*` tag from `project.conf`) |
+| `workflow_dispatch` | Build web/macos/windows (or one platform); push itch + S3 |
+| Push tag `v*` | Same + GitHub Release |
 
-### Features
+```bash
+# bump VERSION in project.conf first, commit, then:
+make release              # or: make release REF=main
+make release-watch        # dispatch + stream the run
+make ci PLATFORM=web      # itch/S3 only, no tag
+```
 
- - $(Game Feature 01)
- - $(Game Feature 02)
- - $(Game Feature 03)
+Requires [`gh`](https://cli.github.com/) authenticated (`gh auth login`).
 
-### Controls
+**itch.io:** `nicapotato/hex-magical` channels `web` / `osx` / `windows`  
+**S3:** `games/prototype/hex-magical/<version>/` (+ catalog merge)
 
-Keyboard:
- - $(Game Control 01)
- - $(Game Control 02)
- - $(Game Control 03)
+Secrets (same as chlorostitch):
 
-### Screenshots
+- `BUTLER_API_KEY`
+- `AWS_PUBLIC_SOFTWARE_ROLE_ARN`
+- `S3_PUBLIC_SOFTWARE_BUCKET` (optional; defaults to `prod-nicapotato-public-software`)
 
-_TODO: Show your game to the world, animated GIFs recommended!._
+## Project layout
 
-### Developers
+```
+src/
+  main.c       — entry + window
+  platform.c   — desktop vs emscripten main loop
+  game.c       — title / playing / win state machine
+  physics.c    — Box2D world, ball, drawn bodies
+  sketch.c     — stroke capture + RDP simplify
+  render.c     — crayon-on-paper draw + debug overlay
+  levels.h     — 3 hard-coded LevelDefs
+```
 
- - $(Developer 01) - $(Role/Tasks Developed)
- - $(Developer 02) - $(Role/Tasks Developed)
- - $(Developer 03) - $(Role/Tasks Developed)
+## License
 
-### Links
-
- - YouTube Gameplay: $(YouTube Link)
- - itch.io Release: $(itch.io Game Page)
- - Steam Release: $(Steam Game Page)
-
-### License
-
-This project sources are licensed under an unmodified zlib/libpng license, which is an OSI-certified, BSD-like license that allows static linking with closed source software. Check [LICENSE](LICENSE) for further details.
-
-$(Additional Licenses)
-
-*Copyright (c) $(Year) $(User Name) ($(User Twitter/GitHub Name))*
+zlib/libpng (see LICENSE). Box2D is MIT. raylib is zlib/libpng.

@@ -29,15 +29,28 @@
 PLATFORM              ?= PLATFORM_DESKTOP
 
 # Define project variables
-PROJECT_NAME          ?= raylib_game
+PROJECT_NAME          ?= hex-magical
 PROJECT_VERSION       ?= 1.0
 PROJECT_BUILD_PATH    ?= .
-PROJECT_SOURCE_FILES  ?= raylib_game.c
+PROJECT_SOURCE_FILES  ?= main.c game.c platform.c physics.c sketch.c render.c
 
 # raylib library variables
 RAYLIB_PATH           ?= C:/raylib/raylib
 RAYLIB_INCLUDE_PATH   ?= $(RAYLIB_PATH)/src
 RAYLIB_LIB_PATH       ?= $(RAYLIB_PATH)/src
+
+# Box2D v3 (sibling checkout in CI: ../../box2d, or local external/box2d)
+BOX2D_PATH            ?= ../external/box2d
+BOX2D_INCLUDE_PATH    ?= $(BOX2D_PATH)/include
+BOX2D_SRC_PATH        ?= $(BOX2D_PATH)/src
+BOX2D_C_FILES         = \
+	aabb.c arena_allocator.c array.c bitset.c body.c broad_phase.c \
+	constraint_graph.c contact.c contact_solver.c core.c distance.c \
+	distance_joint.c dynamic_tree.c geometry.c hull.c id_pool.c island.c \
+	joint.c manifold.c math_functions.c motor_joint.c mouse_joint.c mover.c \
+	prismatic_joint.c revolute_joint.c sensor.c shape.c solver.c solver_set.c \
+	table.c timer.c types.c weld_joint.c wheel_joint.c world.c
+BOX2D_OBJS            = $(patsubst %.c,box2d_%.o,$(BOX2D_C_FILES))
 
 # Library type used for raylib: STATIC (.a) or SHARED (.so/.dll)
 RAYLIB_LIBTYPE        ?= STATIC
@@ -50,7 +63,7 @@ BUILD_MODE            ?= RELEASE
 
 # PLATFORM_WEB: Default properties
 BUILD_WEB_ASYNCIFY    ?= FALSE
-BUILD_WEB_SHELL       ?= minshell.html
+BUILD_WEB_SHELL       ?= platform/minshell.html
 BUILD_WEB_HEAP_SIZE   ?= 128MB
 BUILD_WEB_STACK_SIZE  ?= 1MB
 BUILD_WEB_ASYNCIFY_STACK_SIZE ?= 1048576
@@ -158,10 +171,11 @@ endif
 CFLAGS = -Wall -D_DEFAULT_SOURCE -Wno-missing-braces -Wno-unused-value -Wno-pointer-sign $(PROJECT_CUSTOM_FLAGS)
 #CFLAGS += -Wextra -Wmissing-prototypes -Wstrict-prototypes
 
+# Box2D v3 requires C11+ (atomics); use C17 everywhere
 ifeq ($(PLATFORM),PLATFORM_WEB)
-    CFLAGS += -std=gnu99
+    CFLAGS += -std=gnu17 -DBOX2D_DISABLE_SIMD -ffp-contract=off
 else
-    CFLAGS += -std=c99
+    CFLAGS += -std=c17 -DBOX2D_DISABLE_SIMD -ffp-contract=off
 endif
 
 ifeq ($(BUILD_MODE),DEBUG)
@@ -188,6 +202,7 @@ endif
 # Define include paths for required headers: INCLUDE_PATHS
 #------------------------------------------------------------------------------------------------
 INCLUDE_PATHS += -I. -Iexternal -I$(RAYLIB_INCLUDE_PATH)
+INCLUDE_PATHS += -I$(BOX2D_INCLUDE_PATH) -I$(BOX2D_SRC_PATH)
 
 # Define additional directories containing required header files
 ifeq ($(PLATFORM),PLATFORM_DRM)
@@ -324,7 +339,7 @@ OBJS = $(patsubst %.c, %.o, $(PROJECT_SOURCE_FILES))
 #------------------------------------------------------------------------------------------------
 # For Android platform we call a custom Makefile.Android
 ifeq ($(PLATFORM),PLATFORM_ANDROID)
-    MAKEFILE_TARGET = -f Makefile.Android
+    MAKEFILE_TARGET = -f platform/Makefile.Android
     export PROJECT_NAME
     export PROJECT_SOURCE_FILES
 else
@@ -336,12 +351,16 @@ all:
 	$(MAKE) $(MAKEFILE_TARGET)
 
 # Project target defined by PROJECT_NAME
-$(PROJECT_NAME): $(OBJS)
-	$(CC) -o $(PROJECT_BUILD_PATH)/$(PROJECT_NAME)$(EXT) $(OBJS) $(CFLAGS) $(INCLUDE_PATHS) $(LDFLAGS) $(LDLIBS) -D$(PLATFORM)
+$(PROJECT_NAME): $(OBJS) $(BOX2D_OBJS)
+	$(CC) -o $(PROJECT_BUILD_PATH)/$(PROJECT_NAME)$(EXT) $(OBJS) $(BOX2D_OBJS) $(CFLAGS) $(INCLUDE_PATHS) $(LDFLAGS) $(LDLIBS) -D$(PLATFORM)
 
 # Compile source files
 # NOTE: This pattern will compile every module defined on $(OBJS)
 %.o: %.c
+	$(CC) -c $< -o $@ $(CFLAGS) $(INCLUDE_PATHS) -D$(PLATFORM)
+
+# Compile Box2D sources into prefixed objects (keeps them out of game %.o clashes)
+box2d_%.o: $(BOX2D_SRC_PATH)/%.c
 	$(CC) -c $< -o $@ $(CFLAGS) $(INCLUDE_PATHS) -D$(PLATFORM)
 
 # Clean everything
@@ -352,29 +371,29 @@ ifeq ($(PLATFORM),PLATFORM_DESKTOP)
     endif
     ifeq ($(PLATFORM_OS),LINUX)
 	find . -type f -executable -delete
-	rm -fv *.o
+	rm -fv *.o box2d_*.o
     endif
     ifeq ($(PLATFORM_OS),OSX)
-	rm -f *.o external/*.o $(PROJECT_NAME)
+	rm -f *.o box2d_*.o external/*.o $(PROJECT_NAME)
     endif
 endif
 ifeq ($(PLATFORM),PLATFORM_RPI)
 	find . -type f -executable -delete
-	rm -fv *.o
+	rm -fv *.o box2d_*.o
 endif
 ifeq ($(PLATFORM),PLATFORM_DRM)
 	find . -type f -executable -delete
-	rm -fv *.o
+	rm -fv *.o box2d_*.o
 endif
 ifeq ($(PLATFORM),PLATFORM_WEB)
     ifeq ($(PLATFORM_OS),WINDOWS)
-	del *.o *.html *.js
+	del *.o box2d_*.o *.html *.js
     endif
     ifeq ($(PLATFORM_OS),LINUX)
-	rm -fv *.o $(PROJECT_NAME).data $(PROJECT_NAME).html $(PROJECT_NAME).js $(PROJECT_NAME).wasm
+	rm -fv *.o box2d_*.o $(PROJECT_NAME).data $(PROJECT_NAME).html $(PROJECT_NAME).js $(PROJECT_NAME).wasm
     endif
     ifeq ($(PLATFORM_OS),OSX)
-	rm -f *.o $(PROJECT_NAME).data $(PROJECT_NAME).html $(PROJECT_NAME).js $(PROJECT_NAME).wasm
+	rm -f *.o box2d_*.o $(PROJECT_NAME).data $(PROJECT_NAME).html $(PROJECT_NAME).js $(PROJECT_NAME).wasm
     endif
 endif
 	@echo Cleaning done

@@ -1,0 +1,692 @@
+name: Hex Magical CI/CD - itch.io + S3
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_platform:
+        description: 'Platform to build'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - web
+          - macos
+          - windows
+          - all
+      channel:
+        description: 'itch.io channel override; defaults per platform (web / osx / windows) if empty'
+        required: false
+        default: ''
+        type: string
+      version:
+        description: 'Version override (leave empty to use project.conf)'
+        required: false
+        default: ''
+        type: string
+      publish_gh_release:
+        description: 'Create tag + GitHub Release (uses project.conf version)'
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: hex-magical-cicd-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  PROJECT_DIR: .
+  ITCH_USER: nicapotato
+  ITCH_GAME: hex-magical
+  AWS_REGION: eu-west-2
+  S3_CATEGORY: games
+  S3_MATURITY: prototype
+  S3_GAME_KEY: hex-magical
+  S3_IFRAME_WIDTH: "720"
+  S3_IFRAME_HEIGHT: "720"
+  PUBLISH_ITCH: 'true'
+  PUBLISH_S3: 'true'
+  PUBLISH_GH_RELEASE: 'false'
+
+jobs:
+  resolve-publish-flags:
+    runs-on: ubuntu-latest
+    outputs:
+      publish_s3: ${{ steps.flags.outputs.publish_s3 }}
+      publish_gh_release: ${{ steps.flags.outputs.publish_gh_release }}
+    steps:
+      - id: flags
+        env:
+          INPUT_GH: ${{ github.event.inputs.publish_gh_release }}
+        run: |
+          set -euo pipefail
+          echo "publish_s3=${PUBLISH_S3}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "publish_gh_release=${INPUT_GH}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "publish_gh_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish_gh_release=${PUBLISH_GH_RELEASE}" >> "$GITHUB_OUTPUT"
+          fi
+
+  read-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${INPUT_VERSION}" ]; then
+            echo "version=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "✅ Version from workflow input: ${INPUT_VERSION}"
+            exit 0
+          fi
+          f="${{ env.PROJECT_DIR }}/project.conf"
+          test -f "$f"
+          V=$(grep '^VERSION=' "$f" | cut -d= -f2)
+          if [ -z "${V}" ]; then
+            V="latest"
+          fi
+          echo "version=${V}" >> "$GITHUB_OUTPUT"
+          echo "✅ Version from project.conf: ${V}"
+
+  build-and-push-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.event.inputs.build_platform == 'web' || github.event.inputs.build_platform == 'all' || (github.event.inputs.build_platform == '' && (github.event_name == 'push' || github.event_name == 'pull_request'))
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    env:
+      BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 'latest'
+
+      - name: Extract version
+        id: version
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          elif [ -f "project.conf" ]; then
+            VERSION=$(grep '^VERSION=' project.conf | cut -d= -f2)
+            if [ -z "$VERSION" ]; then VERSION="latest"; fi
+          else
+            VERSION="latest"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "✅ Version set to: $VERSION"
+
+      - name: Build + package WebAssembly
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          echo "🔨 Building WebAssembly (vendors raylib + box2d)..."
+          make -f Makefile.web package
+          echo "✅ WebAssembly build complete"
+          ls -la bin/wasm/
+
+      - name: Upload WASM zip artifact (S3 / GH release)
+        if: >-
+          env.PUBLISH_S3 == 'true' ||
+          env.PUBLISH_GH_RELEASE == 'true' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_gh_release == 'true') ||
+          startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: hex-magical-wasm-zip
+          path: ${{ env.PROJECT_DIR }}/bin/wasm/hex-magical_wasm.zip
+          if-no-files-found: error
+
+      - name: Upload WASM exploded artifact (S3 playable tree)
+        if: env.PUBLISH_S3 == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hex-magical-wasm-exploded
+          path: |
+            ${{ env.PROJECT_DIR }}/bin/wasm/index.html
+            ${{ env.PROJECT_DIR }}/bin/wasm/index.js
+            ${{ env.PROJECT_DIR }}/bin/wasm/index.wasm
+            ${{ env.PROJECT_DIR }}/bin/wasm/index.data
+          if-no-files-found: error
+
+      - name: Setup butler
+        if: env.PUBLISH_ITCH == 'true'
+        uses: remarkablegames/setup-butler@v2
+        with:
+          butler-version: LATEST
+
+      - name: Push to itch.io (web)
+        if: env.PUBLISH_ITCH == 'true'
+        working-directory: ${{ env.PROJECT_DIR }}
+        env:
+          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+        run: |
+          set -euo pipefail
+          CHANNEL="${{ github.event.inputs.channel }}"
+          if [ -z "$CHANNEL" ]; then CHANNEL="web"; fi
+          VERSION="${{ steps.version.outputs.version }}"
+
+          if [ -z "$BUTLER_API_KEY" ]; then
+            echo "❌ Error: BUTLER_API_KEY secret is not set"
+            exit 1
+          fi
+
+          echo "🚀 Pushing to itch.io ${{ env.ITCH_USER }}/${{ env.ITCH_GAME }}:${CHANNEL} @ ${VERSION}"
+          # itch.io: set game page type to HTML; embed index.html
+          butler push bin/wasm ${{ env.ITCH_USER }}/${{ env.ITCH_GAME }}:${CHANNEL} --userversion ${VERSION}
+          echo "✅ Successfully pushed to itch.io!"
+
+  build-and-push-macos:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    if: github.event.inputs.build_platform == 'macos' || github.event.inputs.build_platform == 'all' || (github.event.inputs.build_platform == '' && (github.event_name == 'push' || github.event_name == 'pull_request'))
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    env:
+      BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          elif [ -f "project.conf" ]; then
+            VERSION=$(grep '^VERSION=' project.conf | cut -d= -f2)
+            if [ -z "$VERSION" ]; then VERSION="latest"; fi
+          else
+            VERSION="latest"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Build + package macOS (.app zip)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          set -euo pipefail
+          echo "🔨 Building macOS via CMake (FetchContent raylib + box2d)..."
+          make package-macos
+          ls -la hex-magical-macos.zip hex-magical.app/Contents/MacOS/
+
+      - name: Upload macOS zip artifact
+        if: >-
+          env.PUBLISH_S3 == 'true' ||
+          env.PUBLISH_GH_RELEASE == 'true' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_gh_release == 'true') ||
+          startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: hex-magical-macos-zip
+          path: ${{ env.PROJECT_DIR }}/hex-magical-macos.zip
+          if-no-files-found: error
+
+      - name: Setup butler
+        if: env.PUBLISH_ITCH == 'true'
+        uses: remarkablegames/setup-butler@v2
+        with:
+          butler-version: LATEST
+
+      - name: Push to itch.io (macOS)
+        if: env.PUBLISH_ITCH == 'true'
+        working-directory: ${{ env.PROJECT_DIR }}
+        env:
+          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+        run: |
+          set -euo pipefail
+          CHANNEL="${{ github.event.inputs.channel }}"
+          if [ -z "$CHANNEL" ]; then CHANNEL="osx"; fi
+          VERSION="${{ steps.version.outputs.version }}"
+
+          if [ -z "$BUTLER_API_KEY" ]; then
+            echo "❌ Error: BUTLER_API_KEY secret is not set"
+            exit 1
+          fi
+          test -f hex-magical-macos.zip
+
+          echo "🚀 Pushing to itch.io ${{ env.ITCH_USER }}/${{ env.ITCH_GAME }}:${CHANNEL} @ ${VERSION}"
+          butler push hex-magical-macos.zip ${{ env.ITCH_USER }}/${{ env.ITCH_GAME }}:${CHANNEL} --userversion ${VERSION}
+          echo "✅ Successfully pushed to itch.io!"
+
+  build-and-push-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    if: github.event.inputs.build_platform == 'windows' || github.event.inputs.build_platform == 'all' || (github.event.inputs.build_platform == '' && (github.event_name == 'push' || github.event_name == 'pull_request'))
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    env:
+      BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          elif [ -f "project.conf" ]; then
+            VERSION=$(grep '^VERSION=' project.conf | cut -d= -f2)
+            if [ -z "$VERSION" ]; then VERSION="latest"; fi
+          else
+            VERSION="latest"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Build Windows (CMake + FetchContent)
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: cmd
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release --parallel
+
+      - name: Package Windows build
+        working-directory: ${{ env.PROJECT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXE=""
+          for candidate in \
+            "build/hex-magical/Release/hex-magical.exe" \
+            "build/hex-magical/hex-magical.exe" \
+            "build/Release/hex-magical.exe"
+          do
+            if [ -f "$candidate" ]; then EXE="$candidate"; break; fi
+          done
+          test -n "$EXE"
+          echo "Using binary: $EXE"
+          rm -rf release
+          mkdir -p release
+          cp "$EXE" release/hex-magical.exe
+          if [ -d src/resources ]; then cp -R src/resources release/resources; fi
+          rm -f hex-magical-windows.zip
+          7z a hex-magical-windows.zip ./release/*
+          ls -la hex-magical-windows.zip
+
+      - name: Upload Windows zip artifact
+        if: >-
+          env.PUBLISH_S3 == 'true' ||
+          env.PUBLISH_GH_RELEASE == 'true' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_gh_release == 'true') ||
+          startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: hex-magical-windows-zip
+          path: ${{ env.PROJECT_DIR }}/hex-magical-windows.zip
+          if-no-files-found: error
+
+      - name: Setup butler
+        if: env.PUBLISH_ITCH == 'true'
+        uses: remarkablegames/setup-butler@v2
+        with:
+          butler-version: LATEST
+
+      - name: Push to itch.io (Windows)
+        if: env.PUBLISH_ITCH == 'true'
+        working-directory: ${{ env.PROJECT_DIR }}
+        env:
+          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+        shell: pwsh
+        run: |
+          $CHANNEL = "${{ github.event.inputs.channel }}"
+          if ([string]::IsNullOrEmpty($CHANNEL)) { $CHANNEL = "windows" }
+          $VERSION = "${{ steps.version.outputs.version }}"
+
+          if ([string]::IsNullOrEmpty($env:BUTLER_API_KEY)) {
+            Write-Host "❌ Error: BUTLER_API_KEY secret is not set"
+            exit 1
+          }
+          if (-not (Test-Path "hex-magical-windows.zip")) {
+            Write-Host "❌ Error: ZIP file not found"
+            exit 1
+          }
+
+          Write-Host "🚀 Pushing to itch.io..."
+          butler push hex-magical-windows.zip ${{ env.ITCH_USER }}/${{ env.ITCH_GAME }}:$CHANNEL --userversion $VERSION
+          Write-Host "✅ Successfully pushed to itch.io!"
+
+  publish-s3:
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-publish-flags
+      - read-version
+      - build-and-push-web
+      - build-and-push-macos
+      - build-and-push-windows
+    if: |
+      needs.resolve-publish-flags.outputs.publish_s3 == 'true' &&
+      needs.read-version.result == 'success' &&
+      needs.build-and-push-web.result == 'success' &&
+      needs.build-and-push-macos.result == 'success' &&
+      needs.build-and-push-windows.result == 'success'
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PUBLIC_SOFTWARE_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Upload zips, WASM tree, checksums, merge catalog
+        env:
+          BUCKET: ${{ secrets.S3_PUBLIC_SOFTWARE_BUCKET }}
+          VERSION: ${{ needs.read-version.outputs.version }}
+          GAME_KEY: ${{ env.S3_GAME_KEY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          BUCKET="${BUCKET:-prod-nicapotato-public-software}"
+          GAME="${GAME_KEY}"
+          VER="${VERSION}"
+          REGION="${AWS_REGION}"
+          BASE="https://${BUCKET}.s3.${REGION}.amazonaws.com"
+          CATEGORY="${{ env.S3_CATEGORY }}"
+          MATURITY="${{ env.S3_MATURITY }}"
+          PREFIX="${CATEGORY}/${MATURITY}/${GAME}/${VER}"
+          CATALOG_KEY="${CATEGORY}/${MATURITY}/catalog.json"
+
+          WZIP="dist/hex-magical-wasm-zip/hex-magical_wasm.zip"
+          MZIP="dist/hex-magical-macos-zip/hex-magical-macos.zip"
+          WINZIP="dist/hex-magical-windows-zip/hex-magical-windows.zip"
+          WDIR="dist/hex-magical-wasm-exploded"
+
+          test -f "$WZIP" && test -f "$MZIP" && test -f "$WINZIP" && test -d "$WDIR"
+
+          aws s3 cp "$WZIP" "s3://${BUCKET}/${PREFIX}/hex-magical-wasm.zip"
+          aws s3 cp "$MZIP" "s3://${BUCKET}/${PREFIX}/hex-magical-macos.zip"
+          aws s3 cp "$WINZIP" "s3://${BUCKET}/${PREFIX}/hex-magical-windows.zip"
+
+          sha256sum "$WZIP" | awk '{print $1 "  hex-magical-wasm.zip"}' | aws s3 cp - "s3://${BUCKET}/${PREFIX}/hex-magical-wasm.zip.sha256" --content-type text/plain
+          sha256sum "$MZIP" | awk '{print $1 "  hex-magical-macos.zip"}' | aws s3 cp - "s3://${BUCKET}/${PREFIX}/hex-magical-macos.zip.sha256" --content-type text/plain
+          sha256sum "$WINZIP" | awk '{print $1 "  hex-magical-windows.zip"}' | aws s3 cp - "s3://${BUCKET}/${PREFIX}/hex-magical-windows.zip.sha256" --content-type text/plain
+
+          cd "$WDIR"
+          find . -type f | while IFS= read -r f; do
+            rel="${f#./}"
+            case "$rel" in
+              *.html) ct=text/html ;;
+              *.js)   ct=application/javascript ;;
+              *.wasm) ct=application/wasm ;;
+              *.data) ct=application/octet-stream ;;
+              *.png)  ct=image/png ;;
+              *.jpg|*.jpeg) ct=image/jpeg ;;
+              *.json) ct=application/json ;;
+              *)      ct=application/octet-stream ;;
+            esac
+            aws s3 cp "$f" "s3://${BUCKET}/${PREFIX}/wasm/${rel}" --content-type "$ct"
+          done
+          cd - >/dev/null
+
+          SHA_W=$(sha256sum "$WZIP" | awk '{print $1}')
+          SHA_M=$(sha256sum "$MZIP" | awk '{print $1}')
+          SHA_WIN=$(sha256sum "$WINZIP" | awk '{print $1}')
+          RELEASED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          if ! aws s3 cp "s3://${BUCKET}/${CATALOG_KEY}" catalog.json 2>/dev/null; then
+            echo '{"games":{}}' > catalog.json
+          fi
+
+          NEW=$(jq -n \
+            --arg released "$RELEASED" \
+            --arg iw "${{ env.S3_IFRAME_WIDTH }}" \
+            --arg ih "${{ env.S3_IFRAME_HEIGHT }}" \
+            --arg wasm_zip "${BASE}/${PREFIX}/hex-magical-wasm.zip" \
+            --arg sha_wasm "$SHA_W" \
+            --arg mac_zip "${BASE}/${PREFIX}/hex-magical-macos.zip" \
+            --arg sha_mac "$SHA_M" \
+            --arg win_zip "${BASE}/${PREFIX}/hex-magical-windows.zip" \
+            --arg sha_win "$SHA_WIN" \
+            --arg play_wasm "${BASE}/${PREFIX}/wasm/index.html" \
+            '{
+              released_at: $released,
+              iframe: {width: ($iw | tonumber), height: ($ih | tonumber)},
+              platforms: {
+                wasm: {zip_url: $wasm_zip, sha256: $sha_wasm, play_url: $play_wasm},
+                macos: {zip_url: $mac_zip, sha256: $sha_mac},
+                windows: {zip_url: $win_zip, sha256: $sha_win}
+              }
+            }')
+
+          jq --arg game "$GAME" --arg ver "$VER" --argjson entry "$NEW" \
+            '.games //= {}
+            | .games[$game] //= {display_name: "Hex Magical", versions: {}}
+            | .games[$game].versions //= {}
+            | .games[$game].versions[$ver] = $entry' catalog.json > catalog.merged.json
+
+          aws s3 cp catalog.merged.json "s3://${BUCKET}/${CATALOG_KEY}" --content-type application/json
+          echo "✅ Published to s3://${BUCKET}/${PREFIX}/ and updated ${CATALOG_KEY}"
+
+  publish-github-release:
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-publish-flags
+      - read-version
+      - build-and-push-web
+      - build-and-push-macos
+      - build-and-push-windows
+    if: |
+      always() &&
+      needs.resolve-publish-flags.outputs.publish_gh_release == 'true' &&
+      needs.read-version.result == 'success' &&
+      (needs.build-and-push-web.result == 'success' || needs.build-and-push-web.result == 'skipped') &&
+      (needs.build-and-push-macos.result == 'success' || needs.build-and-push-macos.result == 'skipped') &&
+      (needs.build-and-push-windows.result == 'success' || needs.build-and-push-windows.result == 'skipped') &&
+      (needs.build-and-push-web.result == 'success' ||
+       needs.build-and-push-macos.result == 'success' ||
+       needs.build-and-push-windows.result == 'success')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version and tag
+        id: tag
+        env:
+          VERSION: ${{ needs.read-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "✅ Release tag: ${TAG}"
+
+      - name: Guard duplicate release (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "❌ Tag ${TAG} already exists; bump VERSION in project.conf for a new release"
+            exit 1
+          fi
+          echo "✅ Tag ${TAG} is available"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Prepare release assets and checksums
+        id: assets
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          WZIP="dist/hex-magical-wasm-zip/hex-magical_wasm.zip"
+          MZIP="dist/hex-magical-macos-zip/hex-magical-macos.zip"
+          WINZIP="dist/hex-magical-windows-zip/hex-magical-windows.zip"
+          DL_BODY="## Downloads"
+
+          if [ -f "$WZIP" ]; then
+            cp "$WZIP" release-assets/
+            S=$(sha256sum "$WZIP" | awk '{print $1}')
+            printf '%s  hex-magical_wasm.zip\n' "$S" > release-assets/hex-magical_wasm.zip.sha256
+            DL_BODY="${DL_BODY}"$'\n'"- **Web (WASM):** \`hex-magical_wasm.zip\` (\`${S}\`)"
+            echo "web=passing" >> "$GITHUB_OUTPUT"
+          else
+            echo "web=skipped" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -f "$MZIP" ]; then
+            cp "$MZIP" release-assets/
+            S=$(sha256sum "$MZIP" | awk '{print $1}')
+            printf '%s  hex-magical-macos.zip\n' "$S" > release-assets/hex-magical-macos.zip.sha256
+            DL_BODY="${DL_BODY}"$'\n'"- **macOS:** \`hex-magical-macos.zip\` (\`${S}\`)"
+            echo "macos=passing" >> "$GITHUB_OUTPUT"
+          else
+            echo "macos=skipped" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -f "$WINZIP" ]; then
+            cp "$WINZIP" release-assets/
+            S=$(sha256sum "$WINZIP" | awk '{print $1}')
+            printf '%s  hex-magical-windows.zip\n' "$S" > release-assets/hex-magical-windows.zip.sha256
+            DL_BODY="${DL_BODY}"$'\n'"- **Windows x64:** \`hex-magical-windows.zip\` (\`${S}\`)"
+            echo "windows=passing" >> "$GITHUB_OUTPUT"
+          else
+            echo "windows=skipped" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ ! -f release-assets/hex-magical_wasm.zip ] && \
+             [ ! -f release-assets/hex-magical-macos.zip ] && \
+             [ ! -f release-assets/hex-magical-windows.zip ]; then
+            echo "❌ No release artifacts found"
+            exit 1
+          fi
+
+          {
+            echo "body<<EOF"
+            echo "$DL_BODY"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # softprops creates the git tag when it does not exist (workflow_dispatch / make release).
+      - name: Create git tag + GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Hex Magical ${{ steps.tag.outputs.tag }}
+          generate_release_notes: true
+          body: |
+            ${{ steps.assets.outputs.body }}
+          files: |
+            release-assets/*
+
+      - name: Update README release badges
+        env:
+          VERSION: ${{ needs.read-version.outputs.version }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          WEB: ${{ steps.assets.outputs.web }}
+          MACOS: ${{ steps.assets.outputs.macos }}
+          WINDOWS: ${{ steps.assets.outputs.windows }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import os
+          import re
+
+          tag = os.environ["TAG"]
+          statuses = {
+              "web wasm": os.environ["WEB"],
+              "macos": os.environ["MACOS"],
+              "windows x64": os.environ["WINDOWS"],
+          }
+
+          def static_badge(label: str, status: str) -> str:
+              msg, color = {
+                  "passing": ("passing", "brightgreen"),
+                  "skipped": ("skipped", "lightgrey"),
+              }.get(status, ("failed", "red"))
+              enc = label.replace(" ", "%20")
+              return f"https://img.shields.io/badge/{enc}-{msg}-{color}"
+
+          with open("README.md", encoding="utf-8") as f:
+              content = f.read()
+
+          content = re.sub(
+              r"badge/release-v[0-9.]+-blue",
+              f"badge/release-{tag}-blue",
+              content,
+              count=1,
+          )
+          content = re.sub(
+              r"releases/tag/v[0-9.]+",
+              f"releases/tag/{tag}",
+              content,
+              count=1,
+          )
+          content = re.sub(
+              r"^## hex-magical v[^\n]+",
+              f"## hex-magical {tag}",
+              content,
+              flags=re.MULTILINE,
+          )
+
+          rows = [
+              ("Web (WASM)", "Web WASM", "web wasm", "hex-magical_wasm.zip"),
+              ("macOS", "macOS", "macos", "hex-magical-macos.zip"),
+              ("Windows x64", "Windows x64", "windows x64", "hex-magical-windows.zip"),
+          ]
+          for platform, alt, label, artifact in rows:
+              badge = static_badge(label, statuses[label])
+              download = f"https://github.com/nicapotato/hex-magical/releases/download/{tag}/{artifact}"
+              row = f"| {platform} | ![{alt}]({badge}) | [{artifact}]({download}) |"
+              content = re.sub(
+                  rf"\| {re.escape(platform)} \| [^\n]+",
+                  row,
+                  content,
+              )
+
+          with open("README.md", "w", encoding="utf-8") as f:
+              f.write(content)
+          PY
+
+      - name: Commit badge updates
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cp README.md /tmp/readme-staging.md
+          if [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            git fetch origin "$DEFAULT_BRANCH"
+            git checkout "$DEFAULT_BRANCH"
+            git pull --ff-only origin "$DEFAULT_BRANCH"
+            cp /tmp/readme-staging.md README.md
+          fi
+          git add README.md
+          if git diff --staged --quiet; then
+            echo "No badge changes to commit"
+            exit 0
+          fi
+          git commit -m "chore: update hex-magical release badges for ${{ steps.tag.outputs.tag }}"
+          git push origin HEAD:"$DEFAULT_BRANCH"
+          echo "✅ README badges committed"
