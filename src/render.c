@@ -5,6 +5,7 @@
 ********************************************************************************************/
 
 #include "render.h"
+#include "admin.h"
 #include "game.h"
 
 #include <math.h>
@@ -287,9 +288,66 @@ Rectangle RenderGetDebugButtonRect(void)
 
 Rectangle RenderGetStartButtonRect(void)
 {
-    // Sit left of DEBUG so both fit in the top-right
-    Rectangle debug = RenderGetDebugButtonRect();
-    return (Rectangle){ debug.x - 164.0f - 8.0f, 12.0f, 164.0f, 40.0f };
+    // Sit left of ADMIN so START | ADMIN | DEBUG line up in the top-right
+    Rectangle admin = AdminGetButtonRect();
+    return (Rectangle){ admin.x - 164.0f - 8.0f, 12.0f, 164.0f, 40.0f };
+}
+
+#define LEVEL_MENU_X 16.0f
+#define LEVEL_MENU_Y 8.0f
+#define LEVEL_MENU_W 230.0f
+#define LEVEL_MENU_HEADER_H 30.0f
+#define LEVEL_MENU_ROW_H 26.0f
+
+Rectangle RenderGetLevelMenuHeaderRect(void)
+{
+    return (Rectangle){ LEVEL_MENU_X, LEVEL_MENU_Y, LEVEL_MENU_W, LEVEL_MENU_HEADER_H };
+}
+
+Rectangle RenderGetLevelMenuItemRect(int index)
+{
+    return (Rectangle){
+        LEVEL_MENU_X,
+        LEVEL_MENU_Y + LEVEL_MENU_HEADER_H + (float)index * LEVEL_MENU_ROW_H,
+        LEVEL_MENU_W,
+        LEVEL_MENU_ROW_H
+    };
+}
+
+static void DrawLevelMenu(const char *levelName, int levelIndex, bool open, Vector2 uiMouse)
+{
+    Rectangle header = RenderGetLevelMenuHeaderRect();
+    bool headerHover = CheckCollisionPointRec(uiMouse, header);
+
+    DrawRectangleRec(header, headerHover ? (Color){ 235, 222, 190, 255 } : (Color){ 245, 236, 214, 235 });
+    DrawRectangleLinesEx(header, 2.0f, INK_BROWN);
+    const char *label = TextFormat("Level %d: %s  %s", levelIndex + 1, levelName, open ? "^" : "v");
+    DrawText(label, (int)header.x + 8, (int)header.y + 6, 18, INK_BROWN);
+
+    if (!open) return;
+
+    for (int i = 0; i < LEVEL_COUNT; i++)
+    {
+        Rectangle item = RenderGetLevelMenuItemRect(i);
+        bool hover = CheckCollisionPointRec(uiMouse, item);
+        bool current = (i == levelIndex);
+
+        Color fill = current ? (Color){ 210, 50, 50, 220 }
+                   : hover ? (Color){ 235, 222, 190, 245 }
+                   : (Color){ 245, 236, 214, 235 };
+        DrawRectangleRec(item, fill);
+        DrawRectangleLinesEx(item, 1.0f, CRAYON_BROWN);
+        DrawText(TextFormat("%d. %s", i + 1, LEVELS[i].name),
+                 (int)item.x + 8, (int)item.y + 5, 16,
+                 current ? PAPER : INK_BROWN);
+    }
+}
+
+static void DrawFpsIndicator(void)
+{
+    const char *fps = TextFormat("%d FPS", GetFPS());
+    int fw = MeasureText(fps, 16);
+    DrawText(fps, GAME_SCREEN_WIDTH - fw - 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
 }
 
 static void DrawUiButton(Rectangle btn, const char *label, bool active, bool hover)
@@ -322,7 +380,8 @@ static void DrawUiButton(Rectangle btn, const char *label, bool active, bool hov
     DrawText(label, (int)btn.x + ((int)btn.width - tw) / 2, (int)btn.y + 11, 18, text);
 }
 
-void RenderHud(const char *levelName, int levelIndex, bool showWin, bool showTitle, bool showStart, bool debugMode)
+void RenderHud(const char *levelName, int levelIndex, bool showWin, bool showTitle, bool showStart,
+               bool debugMode, bool levelMenuOpen, Vector2 uiMouse)
 {
     if (showTitle)
     {
@@ -331,25 +390,22 @@ void RenderHud(const char *levelName, int levelIndex, bool showWin, bool showTit
         DrawText("Draw under the ball, then drop it to the star", 120, 340, 18, INK_BROWN);
         DrawText("LMB draw   RMB erase   ENTER drop   R restart", 140, 380, 18, CRAYON_BROWN);
         DrawText("Press SPACE or click to play", 200, 480, 22, BALL_RED);
+        DrawFpsIndicator();
         return;
     }
 
-    const char *label = TextFormat("Level %d: %s", levelIndex + 1, levelName);
-    DrawText(label, 16, 12, 22, INK_BROWN);
-
-    Vector2 mouse = GetMousePosition();
     Rectangle debugBtn = RenderGetDebugButtonRect();
-    DrawUiButton(debugBtn, "DEBUG", debugMode, CheckCollisionPointRec(mouse, debugBtn));
+    DrawUiButton(debugBtn, "DEBUG", debugMode, CheckCollisionPointRec(uiMouse, debugBtn));
 
     if (showStart)
     {
         Rectangle btn = RenderGetStartButtonRect();
-        DrawUiButton(btn, "START", false, CheckCollisionPointRec(mouse, btn));
+        DrawUiButton(btn, "START", false, CheckCollisionPointRec(uiMouse, btn));
         DrawText("Draw a path, then START or ENTER to drop the ball", 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
     }
     else
     {
-        DrawText("LMB draw  RMB erase  R restart  D debug", 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
+        DrawText("LMB draw  RMB erase  R restart  D debug  [ ] level", 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
     }
 
     if (debugMode)
@@ -364,4 +420,9 @@ void RenderHud(const char *levelName, int levelIndex, bool showWin, bool showTit
         DrawText("You did it!", 240, 300, 40, BALL_RED);
         DrawText("Click or SPACE for next level", 180, 360, 20, INK_BROWN);
     }
+
+    DrawFpsIndicator();
+
+    // Drawn last so the open list overlaps the play field
+    DrawLevelMenu(levelName, levelIndex, levelMenuOpen, uiMouse);
 }

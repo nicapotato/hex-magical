@@ -1,0 +1,37 @@
+{
+    "activeFile": "",
+    "expandedProjectPaths": [
+        ".",
+        "rules"
+    ],
+    "fileStates": {
+        "auto-tile-example.tmx": {
+            "scale": 1.7891666666666666,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 67.07033069399162,
+                "y": 108.98928737773639
+            }
+        },
+        "rules/automap-rules.tmx": {
+            "scale": 1.7891666666666666,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 239.77643223102004,
+                "y": 159.85095482068004
+            }
+        },
+        "tileset.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        }
+    },
+    "openFiles": [
+    ],
+    "project": "",
+    "recentFiles": [
+        "tileset.tsx",
+        "rules/automap-rules.tmx",
+        "auto-tile-example.tmx"
+    ]
+}

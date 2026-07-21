@@ -30,7 +30,8 @@ GAME_SRCS = \
 	$(SRC_DIR)/platform.c \
 	$(SRC_DIR)/physics.c \
 	$(SRC_DIR)/sketch.c \
-	$(SRC_DIR)/render.c
+	$(SRC_DIR)/render.c \
+	$(SRC_DIR)/admin.c
 
 BOX2D_SRCS = \
 	$(BOX2D_SRC)/aabb.c \

@@ -12,7 +12,18 @@ int main(void)
 
     // Initialization
     //--------------------------------------------------------------------------------------
+#if !defined(PLATFORM_WEB)
+    // Borderless fullscreen by default; user can still resize after leaving that mode.
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_BORDERLESS_WINDOWED_MODE | FLAG_VSYNC_HINT);
+#else
+    SetConfigFlags(FLAG_VSYNC_HINT);
+#endif
+
     InitWindow(GAME_SCREEN_WIDTH, GAME_SCREEN_HEIGHT, "hex-magical — crayon physics");
+
+#if !defined(PLATFORM_WEB)
+    SetWindowMinSize(GAME_SCREEN_WIDTH / 2, GAME_SCREEN_HEIGHT / 2);
+#endif
 
     GameInit();
     //--------------------------------------------------------------------------------------

@@ -11,7 +11,10 @@
 #include <string.h>
 
 #define BALL_USER_TAG ((intptr_t)-1)
-#define WORLD_GRAVITY_Y 1400.0f
+#define WORLD_GRAVITY_Y 2100.0f
+// World units are pixels; Box2D's default speed cap (400 units/s) would choke
+// ramp launches, so allow genuinely fast flight
+#define WORLD_MAX_SPEED 10000.0f
 
 //----------------------------------------------------------------------------------
 // Local helpers
@@ -75,16 +78,16 @@ static void CreateBall(PhysicsWorld *phys, const LevelDef *level)
     b2BodyDef bodyDef = b2DefaultBodyDef();
     bodyDef.type = b2_dynamicBody;
     bodyDef.position = ToB2(level->ballSpawn);
-    bodyDef.linearDamping = 0.05f;
+    bodyDef.linearDamping = 0.0f;    // no air drag — preserve launch speed for long flights
     bodyDef.angularDamping = 0.2f;
     bodyDef.isBullet = true;
     phys->ballId = b2CreateBody(phys->worldId, &bodyDef);
     phys->ballRadius = level->ballRadius;
 
     b2ShapeDef shapeDef = b2DefaultShapeDef();
-    shapeDef.density = 1.0f;
+    shapeDef.density = phys->tunables.ballDensity;
     shapeDef.material.friction = 0.4f;
-    shapeDef.material.restitution = 0.25f;
+    shapeDef.material.restitution = phys->tunables.ballRestitution;
 
     b2Circle circle = { 0 };
     circle.center = (b2Vec2){ 0.0f, 0.0f };
@@ -98,12 +101,32 @@ static void CreateBall(PhysicsWorld *phys, const LevelDef *level)
 //----------------------------------------------------------------------------------
 // Module Functions Definition
 //----------------------------------------------------------------------------------
+void PhysicsTunablesDefaults(PhysicsTunables *t)
+{
+    t->ballDensity = TUNE_BALL_DENSITY_DEFAULT;
+    t->ballRestitution = TUNE_BALL_RESTITUTION_DEFAULT;
+    t->dropForce = TUNE_DROP_FORCE_DEFAULT;
+}
+
+void PhysicsApplyBallTunables(PhysicsWorld *phys)
+{
+    if (!phys->valid || !b2Body_IsValid(phys->ballId)) return;
+
+    b2ShapeId shapes[1];
+    int count = b2Body_GetShapes(phys->ballId, shapes, 1);
+    if (count < 1) return;
+
+    b2Shape_SetDensity(shapes[0], phys->tunables.ballDensity, true);
+    b2Shape_SetRestitution(shapes[0], phys->tunables.ballRestitution);
+}
+
 void PhysicsInit(PhysicsWorld *phys)
 {
     memset(phys, 0, sizeof(*phys));
     phys->worldId = b2_nullWorldId;
     phys->ballId = b2_nullBodyId;
     phys->simulating = false;
+    PhysicsTunablesDefaults(&phys->tunables);
     ClearDrawn(phys);
 }
 
@@ -133,6 +156,7 @@ void PhysicsLoadLevel(PhysicsWorld *phys, const LevelDef *level)
     b2WorldDef worldDef = b2DefaultWorldDef();
     // Build phase: zero gravity so drawn shapes stay put until Start
     worldDef.gravity = (b2Vec2){ 0.0f, 0.0f };
+    worldDef.maximumLinearSpeed = WORLD_MAX_SPEED;
     phys->worldId = b2CreateWorld(&worldDef);
     phys->valid = true;
 
@@ -154,6 +178,11 @@ void PhysicsStartSimulation(PhysicsWorld *phys)
     if (b2Body_IsValid(phys->ballId))
     {
         b2Body_SetAwake(phys->ballId, true);
+        // Initial downward kick on top of gravity (admin tunable)
+        if (phys->tunables.dropForce > 0.0f)
+        {
+            b2Body_SetLinearVelocity(phys->ballId, (b2Vec2){ 0.0f, phys->tunables.dropForce });
+        }
     }
 
     for (int i = 0; i < MAX_DRAWN_BODIES; i++)
@@ -263,8 +292,8 @@ int PhysicsCreateDrawnBody(PhysicsWorld *phys, const Vector2 *worldPoints, int c
     b2BodyId bodyId = b2CreateBody(phys->worldId, &bodyDef);
 
     b2ShapeDef shapeDef = b2DefaultShapeDef();
-    // Density shared across many capsules — keep total mass reasonable
-    shapeDef.density = 0.35f;
+    // Density shared across many capsules — sturdy enough to serve as ramps for the heavy ball
+    shapeDef.density = 0.5f;
     shapeDef.material.friction = 0.55f;
     shapeDef.material.restitution = 0.1f;
 

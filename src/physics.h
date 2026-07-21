@@ -21,6 +21,24 @@
 #define STROKE_PHYSICS_RADIUS 5.0f
 #define MAX_STROKE_CAPSULES 96
 
+// Admin-tunable ball physics (defaults restored via PhysicsTunablesDefaults)
+#define TUNE_BALL_DENSITY_DEFAULT     2.5f
+#define TUNE_BALL_DENSITY_MIN         0.25f
+#define TUNE_BALL_DENSITY_MAX         8.0f
+#define TUNE_BALL_RESTITUTION_DEFAULT 0.25f
+#define TUNE_BALL_RESTITUTION_MIN     0.0f
+#define TUNE_BALL_RESTITUTION_MAX     0.95f
+#define TUNE_DROP_FORCE_DEFAULT       0.0f
+#define TUNE_DROP_FORCE_MIN           0.0f
+#define TUNE_DROP_FORCE_MAX           2500.0f
+
+typedef struct PhysicsTunables
+{
+    float ballDensity;     // ball "weight" — mass via shape density
+    float ballRestitution; // bounciness 0..~1
+    float dropForce;       // initial downward velocity kick applied at drop
+} PhysicsTunables;
+
 typedef struct DrawnBody
 {
     bool active;
@@ -47,9 +65,15 @@ typedef struct PhysicsWorld
     const StaticBox *staticBoxes;
     int staticBoxCount;
 
+    PhysicsTunables tunables; // persists across level loads
+
     float accumulator;
     bool simulating; // false = build phase (ball frozen, no gravity)
 } PhysicsWorld;
+
+void PhysicsTunablesDefaults(PhysicsTunables *t);
+// Live-apply density/restitution to the current ball body (mass recomputed)
+void PhysicsApplyBallTunables(PhysicsWorld *phys);
 
 void PhysicsInit(PhysicsWorld *phys);
 void PhysicsShutdown(PhysicsWorld *phys);
