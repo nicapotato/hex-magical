@@ -4,19 +4,19 @@
     ],
     "fileStates": {
         "rules/auto-tile-rules.tmx": {
-            "scale": 1.7891666666666666,
-            "selectedLayer": 1,
+            "scale": 3,
+            "selectedLayer": 0,
             "viewCenter": {
-                "x": 176.61853749417796,
-                "y": 155.37959944108061
+                "x": 149.83333333333331,
+                "y": 145.66666666666666
             }
         },
         "tile-map.tmx": {
-            "scale": 1.5,
+            "scale": 2,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 281.3333333333333,
-                "y": 231.3333333333333
+                "x": 207.75,
+                "y": 164.5
             }
         }
     },
@@ -27,6 +27,7 @@
     "openFiles": [
     ],
     "project": "hex-magical-test.tiled-project",
+    "property.type": "bool",
     "recentFiles": [
     ],
     "tileset.lastUsedFormat": "tsx",
