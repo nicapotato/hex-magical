@@ -32,8 +32,10 @@ static PhysicsWorld physics = { 0 };
 static SketchState sketch = { 0 };
 static bool debugMode = false;
 static bool levelMenuOpen = false;
+static bool pauseMenuOpen = false; // ESC menu: world frozen while open
 static bool winMenuShow = true; // false = admiring the finished run
 static bool winSolutionSaved = false;
+static int winTrailCount = 0;   // trail samples recorded up to the win moment
 static float runTime = 0.0f;    // seconds since Start, frozen at win
 static float viewZoom = 1.0f;
 static Vector2 viewPan = { 0.0f, 0.0f }; // camera target offset from level center
@@ -156,10 +158,43 @@ static Vector2 GetViewMouse(void)
     };
 }
 
+// Tools available on the current level: zero-capacity TMX resources are hidden
+// from the HUD and unselectable. The checkpoint flag is always free.
+static int GetVisibleTools(BuildTool tools[TOOL_COUNT])
+{
+    const LevelDef *level = GetLevelDef(levelIndex);
+    int count = 0;
+    if (level->lineCapacity > 0.0f) tools[count++] = TOOL_CRAYON;
+    if (level->boostLineCapacity > 0.0f) tools[count++] = TOOL_BOOST_LINE;
+    if (level->cannonCount > 0) tools[count++] = TOOL_CANNON;
+    tools[count++] = TOOL_FLAG;
+    return count;
+}
+
+static void TrySelectTool(BuildTool tool)
+{
+    BuildTool tools[TOOL_COUNT];
+    int count = GetVisibleTools(tools);
+    for (int i = 0; i < count; i++)
+    {
+        if (tools[i] == tool)
+        {
+            SketchCancel(&sketch);
+            sketch.tool = tool;
+            return;
+        }
+    }
+}
+
 static void LoadCurrentLevel(void)
 {
     PhysicsLoadLevel(&physics, GetLevelDef(levelIndex));
     SketchInit(&sketch);
+
+    // Default to the first tool the level actually offers
+    BuildTool tools[TOOL_COUNT];
+    GetVisibleTools(tools);
+    sketch.tool = tools[0];
 }
 
 static const char *GetSolutionsDirectory(void)
@@ -275,7 +310,21 @@ static void QuitToTitle(void)
 {
     screen = SCREEN_TITLE;
     levelMenuOpen = false;
+    pauseMenuOpen = false;
     PhysicsShutdown(&physics);
+}
+
+// Win screen -> back to the build phase with everything intact. The recording
+// is trimmed to the win moment so the ghost trail ends at the star instead of
+// including the post-win admire rolling.
+static void KeepEditingAfterWin(void)
+{
+    if ((winTrailCount > 0) && (winTrailCount <= physics.trailCount))
+    {
+        physics.trailCount = winTrailCount;
+    }
+    PhysicsStopSimulation(&physics); // archives the trail as the ghost
+    screen = SCREEN_PLAYING;
 }
 
 // Live strokes on the canvas (drawnCount is a high-water mark, slots can be erased)
@@ -303,6 +352,17 @@ static bool IsUiClick(Vector2 uiMouse)
     if (CheckCollisionPointRec(uiMouse, AdminGetButtonRect())) return true;
     if (CheckCollisionPointRec(uiMouse, RenderGetLevelMenuHeaderRect())) return true;
     if (CheckCollisionPointRec(uiMouse, RenderGetStartButtonRect())) return true;
+
+    // Tool bar only exists during the build phase
+    if (!PhysicsIsSimulating(&physics))
+    {
+        BuildTool tools[TOOL_COUNT];
+        int toolCount = GetVisibleTools(tools);
+        for (int i = 0; i < toolCount; i++)
+        {
+            if (CheckCollisionPointRec(uiMouse, RenderGetToolButtonRect(i))) return true;
+        }
+    }
     return false;
 }
 
@@ -458,58 +518,118 @@ void GameUpdateDrawFrame(void)
     }
     else if ((screen == SCREEN_PLAYING) || (screen == SCREEN_WIN))
     {
-        // Admin UI gets first claim on the mouse
-        AdminAction adminAction = AdminHandleInput(&physics, uiMouse, lmbDown, lmbPressed);
-        if (adminAction == ADMIN_ACTION_RESPAWN)
+        // ESC menu (build/run only — the win screen keeps ESC for admire).
+        // Layered like a proper pause: an open dropdown closes first.
+        if ((screen == SCREEN_PLAYING) && IsKeyPressed(KEY_ESCAPE))
         {
-            screen = SCREEN_PLAYING;
-            LoadCurrentLevel();
-        }
-        if (adminAction != ADMIN_ACTION_NONE)
-        {
-            lmbPressed = false;
-            lmbDown = false;
+            if (levelMenuOpen) levelMenuOpen = false;
+            else pauseMenuOpen = !pauseMenuOpen;
         }
 
-        // Levels dropdown
-        if (lmbPressed)
+        // While paused the overlay owns all input — skip the shared UI below
+        if (!pauseMenuOpen)
         {
-            if (CheckCollisionPointRec(uiMouse, RenderGetLevelMenuHeaderRect()))
+            // Admin UI gets first claim on the mouse
+            AdminAction adminAction = AdminHandleInput(&physics, uiMouse, lmbDown, lmbPressed);
+            if (adminAction == ADMIN_ACTION_RESPAWN)
             {
-                levelMenuOpen = !levelMenuOpen;
+                screen = SCREEN_PLAYING;
+                LoadCurrentLevel();
+            }
+            if (adminAction != ADMIN_ACTION_NONE)
+            {
                 lmbPressed = false;
                 lmbDown = false;
             }
-            else if (levelMenuOpen)
+
+            // Levels dropdown
+            if (lmbPressed)
             {
-                for (int i = 0; i < GameGetLevelCount(); i++)
+                if (CheckCollisionPointRec(uiMouse, RenderGetLevelMenuHeaderRect()))
                 {
-                    if (CheckCollisionPointRec(uiMouse, RenderGetLevelMenuItemRect(i)))
-                    {
-                        levelIndex = i;
-                        StartPlaying();
-                        break;
-                    }
+                    levelMenuOpen = !levelMenuOpen;
+                    lmbPressed = false;
+                    lmbDown = false;
                 }
-                // Any click while open closes the menu and is consumed
-                levelMenuOpen = false;
-                lmbPressed = false;
-                lmbDown = false;
+                else if (levelMenuOpen)
+                {
+                    for (int i = 0; i < GameGetLevelCount(); i++)
+                    {
+                        if (CheckCollisionPointRec(uiMouse, RenderGetLevelMenuItemRect(i)))
+                        {
+                            levelIndex = i;
+                            StartPlaying();
+                            break;
+                        }
+                    }
+                    // Any click while open closes the menu and is consumed
+                    levelMenuOpen = false;
+                    lmbPressed = false;
+                    lmbDown = false;
+                }
             }
-        }
 
-        // DEBUG toggle available during play/win
-        // F3 (not D — D is camera pan) or the DEBUG button
-        if (IsKeyPressed(KEY_F3) ||
-            (lmbPressed && CheckCollisionPointRec(uiMouse, RenderGetDebugButtonRect())))
-        {
-            debugMode = !debugMode;
-            lmbPressed = false; // consume click so it doesn't draw / advance
+            // DEBUG toggle available during play/win
+            // F3 (not D — D is camera pan) or the DEBUG button
+            if (IsKeyPressed(KEY_F3) ||
+                (lmbPressed && CheckCollisionPointRec(uiMouse, RenderGetDebugButtonRect())))
+            {
+                debugMode = !debugMode;
+                lmbPressed = false; // consume click so it doesn't draw / advance
+            }
         }
     }
 
-    if (screen == SCREEN_PLAYING)
+    if ((screen == SCREEN_PLAYING) && pauseMenuOpen)
     {
+        // Paused: world frozen, only the pause menu responds
+        if (IsKeyPressed(KEY_R))
+        {
+            pauseMenuOpen = false;
+            StartPlaying();
+        }
+        else if (IsKeyPressed(KEY_Q)) { QuitToTitle(); }
+        else if (lmbPressed)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                if (!CheckCollisionPointRec(uiMouse, RenderGetWinMenuButtonRect(i, 3))) continue;
+                if (i == 0) pauseMenuOpen = false;              // Resume
+                else if (i == 1)
+                {
+                    pauseMenuOpen = false;
+                    StartPlaying();                             // Restart level
+                }
+                else QuitToTitle();                             // Quit to title
+                break;
+            }
+        }
+    }
+    else if (screen == SCREEN_PLAYING)
+    {
+        // Tool hotkeys — only tools the level offers can be selected
+        if (IsKeyPressed(KEY_Z)) TrySelectTool(TOOL_CRAYON);
+        if (IsKeyPressed(KEY_X)) TrySelectTool(TOOL_BOOST_LINE);
+        if (IsKeyPressed(KEY_C)) TrySelectTool(TOOL_CANNON);
+        if (IsKeyPressed(KEY_V)) TrySelectTool(TOOL_FLAG);
+
+        // Tool bar clicks (build phase) — consumed so they never draw ink
+        if (lmbPressed && !PhysicsIsSimulating(&physics))
+        {
+            BuildTool tools[TOOL_COUNT];
+            int toolCount = GetVisibleTools(tools);
+            for (int i = 0; i < toolCount; i++)
+            {
+                if (CheckCollisionPointRec(uiMouse, RenderGetToolButtonRect(i)))
+                {
+                    TrySelectTool(tools[i]);
+                    lmbPressed = false;
+                    lmbDown = false;
+                    break;
+                }
+            }
+        }
+
         // Number row is solutions during play (1 save / 2 load / 3 delete) —
         // laptop-friendly, no F-keys. Level select stays on the menu, [ ], and
         // the title screen's number keys.
@@ -561,6 +681,7 @@ void GameUpdateDrawFrame(void)
                 screen = SCREEN_WIN;
                 winMenuShow = true;
                 winSolutionSaved = false;
+                winTrailCount = physics.trailCount; // ghost ends here, not mid-admire
             }
             else if (PhysicsIsSimulating(&physics) && PhysicsCheckPit(&physics))
             {
@@ -600,13 +721,14 @@ void GameUpdateDrawFrame(void)
         PhysicsStep(&physics, dt);
 
         bool hasNext = (levelIndex + 1) < GameGetLevelCount();
-        int buttonCount = hasNext ? 5 : 4;
+        int buttonCount = hasNext ? 6 : 5;
 
         if (!winMenuShow)
         {
             if (IsKeyPressed(KEY_H) || IsKeyPressed(KEY_ESCAPE)) winMenuShow = true;
         }
         else if (IsKeyPressed(KEY_R)) { StartPlaying(); }
+        else if (IsKeyPressed(KEY_E)) { KeepEditingAfterWin(); }
         else if (IsKeyPressed(KEY_S)) { winSolutionSaved = SaveCurrentSolution(); }
         else if (IsKeyPressed(KEY_N) && hasNext) { AdvanceLevel(); }
         else if (IsKeyPressed(KEY_Q)) { QuitToTitle(); }
@@ -617,9 +739,10 @@ void GameUpdateDrawFrame(void)
             {
                 if (!CheckCollisionPointRec(uiMouse, RenderGetWinMenuButtonRect(i, buttonCount))) continue;
                 if (i == 0) winMenuShow = false;                  // Admire creation
-                else if (i == 1) winSolutionSaved = SaveCurrentSolution();
-                else if (i == 2) StartPlaying();                  // Restart level
-                else if ((i == 3) && hasNext) AdvanceLevel();     // Next level
+                else if (i == 1) KeepEditingAfterWin();           // Back to build, ghost kept
+                else if (i == 2) winSolutionSaved = SaveCurrentSolution();
+                else if (i == 3) StartPlaying();                  // Restart level (fresh)
+                else if ((i == 4) && hasNext) AdvanceLevel();     // Next level
                 else QuitToTitle();                               // Quit to title
                 break;
             }
@@ -634,17 +757,23 @@ void GameUpdateDrawFrame(void)
 
         if (screen == SCREEN_TITLE)
         {
-            RenderHud(NULL, 0, true, false, false, false, false, uiMouse);
+            RenderHud(NULL, 0, true, false, false, false, false, false, uiMouse);
         }
         else
         {
             const LevelDef *level = GetLevelDef(levelIndex);
             bool showPlayButton = (screen == SCREEN_PLAYING);
+            bool building = !PhysicsIsSimulating(&physics);
 
             BeginMode2D(camera); // world space: pans/zooms, HUD below does not
                 RenderTiledLevel(GetTiledLevel(levelIndex)); // tile art + no-build overlay
+                if (building) RenderGhostTrail(&physics);    // last run, build phase only
+                RenderBoostLines(&physics);
                 RenderPhysics(&physics);
                 RenderSketchPreview(&sketch);
+                RenderCannons(&physics);
+                RenderCannonPreview(&sketch);
+                RenderCheckpointFlag(&physics);
                 RenderFinishLine(&physics.finishLine);
                 RenderBall(PhysicsGetBallPos(&physics), physics.ballRadius, PhysicsGetBallAngle(&physics));
 
@@ -658,7 +787,14 @@ void GameUpdateDrawFrame(void)
             EndMode2D();
 
             RenderHud(level->name, levelIndex, false, showPlayButton,
-                      PhysicsIsSimulating(&physics), debugMode, levelMenuOpen, uiMouse);
+                      PhysicsIsSimulating(&physics), debugMode, levelMenuOpen,
+                      physics.checkpointSet, uiMouse);
+            if ((screen == SCREEN_PLAYING) && building)
+            {
+                BuildTool tools[TOOL_COUNT];
+                int toolCount = GetVisibleTools(tools);
+                RenderToolBar(&physics, tools, toolCount, sketch.tool, uiMouse);
+            }
             AdminDraw(&physics, uiMouse);
 
             if (screen == SCREEN_WIN)
@@ -671,6 +807,10 @@ void GameUpdateDrawFrame(void)
             else if (screen == SCREEN_GAMEOVER)
             {
                 RenderGameOverMenu(uiMouse);
+            }
+            else if ((screen == SCREEN_PLAYING) && pauseMenuOpen)
+            {
+                RenderPauseMenu(uiMouse);
             }
         }
     EndTextureMode();

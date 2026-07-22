@@ -1,6 +1,7 @@
 /*******************************************************************************************
 *
-*   sketch.c - Mouse stroke capture, RDP simplify, spawn/erase bodies
+*   sketch.c - Build tools: stroke capture (RDP simplify + Chaikin rounding),
+*   cannon aim-and-place, checkpoint flag. Stroke ink is budgeted per level.
 *
 ********************************************************************************************/
 
@@ -114,9 +115,10 @@ static int ChaikinPass(const Vector2 *in, int count, Vector2 *out, int maxOut)
 }
 
 //----------------------------------------------------------------------------------
-// Finalize the accumulated points into a physics body (RDP denoise + Chaikin
-// rounding) and reset accumulation. Strokes split by no-build zones call this
-// once per segment, so each side of the zone becomes its own track piece.
+// Finalize the accumulated points (RDP denoise + Chaikin rounding) into either a
+// solid crayon body or a boost line, and reset accumulation. Strokes split by
+// no-build zones call this once per segment, so each side of the zone becomes
+// its own piece.
 //----------------------------------------------------------------------------------
 static void FinalizeSegment(SketchState *sketch, PhysicsWorld *phys)
 {
@@ -145,10 +147,22 @@ static void FinalizeSegment(SketchState *sketch, PhysicsWorld *phys)
             next = tmp;
         }
 
-        PhysicsCreateDrawnBody(phys, cur, n, sketch->crayonColor);
+        if (sketch->tool == TOOL_BOOST_LINE) PhysicsCreateBoostLine(phys, cur, n);
+        else PhysicsCreateDrawnBody(phys, cur, n, sketch->crayonColor);
     }
 
     sketch->pointCount = 0;
+    sketch->inkUsedThisStroke = 0.0f;
+}
+
+// Remaining ink for the active stroke tool: level capacity minus what already
+// sits on the canvas (erasing refunds by removing geometry) minus the stroke
+// currently being drawn
+static float RemainingInk(const SketchState *sketch, const PhysicsWorld *phys)
+{
+    float capacity = (sketch->tool == TOOL_BOOST_LINE) ? phys->boostLineCapacity : phys->lineCapacity;
+    float used = (sketch->tool == TOOL_BOOST_LINE) ? PhysicsBoostInkUsed(phys) : PhysicsDrawnInkUsed(phys);
+    return capacity - used - sketch->inkUsedThisStroke;
 }
 
 //----------------------------------------------------------------------------------
@@ -156,32 +170,36 @@ static void FinalizeSegment(SketchState *sketch, PhysicsWorld *phys)
 //----------------------------------------------------------------------------------
 void SketchInit(SketchState *sketch)
 {
+    sketch->tool = TOOL_CRAYON;
     sketch->drawing = false;
     sketch->pointCount = 0;
     sketch->crayonColor = CRAYON_BLUE;
+    sketch->inkUsedThisStroke = 0.0f;
+    sketch->aimingCannon = false;
+    sketch->cannonAnchor = (Vector2){ 0.0f, 0.0f };
+    sketch->cannonAngle = 0.0f;
 }
 
 void SketchCancel(SketchState *sketch)
 {
     sketch->drawing = false;
     sketch->pointCount = 0;
+    sketch->inkUsedThisStroke = 0.0f;
+    sketch->aimingCannon = false;
 }
 
-void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, bool lmbDown, bool lmbPressed, bool rmbPressed, bool inNoBuild)
+//----------------------------------------------------------------------------------
+// Per-tool input handling
+//----------------------------------------------------------------------------------
+static void UpdateStrokeTool(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, bool lmbDown, bool lmbPressed, bool inNoBuild)
 {
-    if (rmbPressed)
-    {
-        PhysicsEraseAtPoint(phys, worldMouse);
-        SketchCancel(sketch);
-        return;
-    }
-
     if (lmbPressed)
     {
         // Starting inside a no-build zone is fine — points only register once
         // the cursor leaves the zone
         sketch->drawing = true;
         sketch->pointCount = 0;
+        sketch->inkUsedThisStroke = 0.0f;
         if (!inNoBuild) sketch->points[sketch->pointCount++] = worldMouse;
         return;
     }
@@ -205,11 +223,18 @@ void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, b
         Vector2 last = sketch->points[sketch->pointCount - 1];
         float dx = worldMouse.x - last.x;
         float dy = worldMouse.y - last.y;
-        if ((dx * dx + dy * dy) >= (SAMPLE_DIST * SAMPLE_DIST))
+        float distSq = dx * dx + dy * dy;
+        if (distSq >= (SAMPLE_DIST * SAMPLE_DIST))
         {
+            // Level ink budget: the pen simply runs dry — no point registers
+            // past the remaining capacity (erase strokes to refund)
+            float segLen = sqrtf(distSq);
+            if (segLen > RemainingInk(sketch, phys)) return;
+
             if (sketch->pointCount < MAX_STROKE_POINTS)
             {
                 sketch->points[sketch->pointCount++] = worldMouse;
+                sketch->inkUsedThisStroke += segLen;
             }
         }
         return;
@@ -222,5 +247,67 @@ void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, b
         // truth: collider, ink rendering, and saved solutions all use it.
         FinalizeSegment(sketch, phys);
         sketch->drawing = false;
+    }
+}
+
+static void UpdateCannonTool(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, bool lmbDown, bool lmbPressed, bool inNoBuild)
+{
+    if (lmbPressed)
+    {
+        // Cannons are builds too — no placing inside no-build zones or past the count
+        if (inNoBuild) return;
+        if (PhysicsActiveCannonCount(phys) >= phys->cannonCapacity) return;
+
+        sketch->aimingCannon = true;
+        sketch->cannonAnchor = worldMouse;
+        sketch->cannonAngle = -PI / 2.0f; // default: straight up until dragged
+        return;
+    }
+
+    if (sketch->aimingCannon && lmbDown)
+    {
+        float dx = worldMouse.x - sketch->cannonAnchor.x;
+        float dy = worldMouse.y - sketch->cannonAnchor.y;
+        if ((dx * dx + dy * dy) > (8.0f * 8.0f)) sketch->cannonAngle = atan2f(dy, dx);
+        return;
+    }
+
+    if (sketch->aimingCannon && !lmbDown)
+    {
+        PhysicsAddCannon(phys, sketch->cannonAnchor, sketch->cannonAngle);
+        sketch->aimingCannon = false;
+    }
+}
+
+void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, bool lmbDown, bool lmbPressed, bool rmbPressed, bool inNoBuild)
+{
+    if (rmbPressed)
+    {
+        // RMB erases whatever build sits under the cursor, regardless of tool
+        if (!PhysicsEraseAtPoint(phys, worldMouse))
+        {
+            if (!PhysicsEraseBoostLineAt(phys, worldMouse)) PhysicsEraseCannonAt(phys, worldMouse);
+        }
+        SketchCancel(sketch);
+        return;
+    }
+
+    switch (sketch->tool)
+    {
+        case TOOL_CRAYON:
+        case TOOL_BOOST_LINE:
+        {
+            UpdateStrokeTool(sketch, phys, worldMouse, lmbDown, lmbPressed, inNoBuild);
+        } break;
+        case TOOL_CANNON:
+        {
+            UpdateCannonTool(sketch, phys, worldMouse, lmbDown, lmbPressed, inNoBuild);
+        } break;
+        case TOOL_FLAG:
+        {
+            // Click near the ghost trail plants the flag; clicking away clears it
+            if (lmbPressed) PhysicsSetCheckpointNear(phys, worldMouse);
+        } break;
+        default: break;
     }
 }

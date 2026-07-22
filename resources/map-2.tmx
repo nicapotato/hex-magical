@@ -51,6 +51,11 @@
 </data>
  </layer>
  <objectgroup id="4" name="coords">
+  <properties>
+   <property name="boost_line-capacity" type="float" value="3"/>
+   <property name="cannon-count" type="int" value="1"/>
+   <property name="line-capacity" type="float" value="100"/>
+  </properties>
   <object id="1" name="ball-spawn" x="34.3257" y="47.3329">
    <point/>
   </object>

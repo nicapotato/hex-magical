@@ -36,6 +36,11 @@
 </data>
  </layer>
  <objectgroup id="2" name="game">
+  <properties>
+   <property name="boost_line-capacity" type="float" value="0"/>
+   <property name="cannon-count" type="int" value="3"/>
+   <property name="line-capacity" type="float" value="10"/>
+  </properties>
   <object id="1" name="pit" x="372" y="457.333">
    <polygon points="0,0 -1.33333,24 108,22.6667 120,6.66667 121.333,-26.6667"/>
   </object>

@@ -61,6 +61,13 @@ typedef struct LevelDef
     const char *name;
     Vector2 ballSpawn;
     float ballRadius;
+
+    // Per-level build resources from TMX custom properties (required, fail loud).
+    // Capacities are in canvas pixels of ink; zero hides the tool from the HUD.
+    float lineCapacity;      // crayon ink budget
+    float boostLineCapacity; // boost line ink budget
+    int cannonCount;         // placeable cannons
+
     PolyZone finishLine;
     const StaticBox *boxes;
     int boxCount;

@@ -45,6 +45,54 @@ static void ClearDrawn(PhysicsWorld *phys)
     phys->drawnCount = 0;
 }
 
+// Boost lines, cannons, ghost trail and checkpoint all reset with the level
+static void ClearBuildExtras(PhysicsWorld *phys)
+{
+    memset(phys->boostLines, 0, sizeof(phys->boostLines));
+    memset(phys->cannons, 0, sizeof(phys->cannons));
+    phys->trailCount = 0;
+    phys->trailStepCounter = 0;
+    phys->ghostCount = 0;
+    phys->checkpointSet = false;
+}
+
+// Distance from p to segment ab, plus the segment's unit tangent
+static float PointSegmentDist(Vector2 p, Vector2 a, Vector2 b, Vector2 *tangent)
+{
+    float dx = b.x - a.x;
+    float dy = b.y - a.y;
+    float lenSq = dx * dx + dy * dy;
+    if (lenSq < 0.0001f)
+    {
+        *tangent = (Vector2){ 0.0f, 0.0f };
+        float ex = p.x - a.x;
+        float ey = p.y - a.y;
+        return sqrtf(ex * ex + ey * ey);
+    }
+
+    float t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+
+    float ex = p.x - (a.x + t * dx);
+    float ey = p.y - (a.y + t * dy);
+    float len = sqrtf(lenSq);
+    *tangent = (Vector2){ dx / len, dy / len };
+    return sqrtf(ex * ex + ey * ey);
+}
+
+static float PolylineLength(const Vector2 *points, int count)
+{
+    float length = 0.0f;
+    for (int i = 0; i < count - 1; i++)
+    {
+        float dx = points[i + 1].x - points[i].x;
+        float dy = points[i + 1].y - points[i].y;
+        length += sqrtf(dx * dx + dy * dy);
+    }
+    return length;
+}
+
 static int AllocDrawnSlot(PhysicsWorld *phys)
 {
     for (int i = 0; i < MAX_DRAWN_BODIES; i++)
@@ -192,8 +240,13 @@ void PhysicsLoadLevel(PhysicsWorld *phys, const LevelDef *level)
     }
 
     ClearDrawn(phys);
+    ClearBuildExtras(phys);
     phys->accumulator = 0.0f;
     phys->simulating = false;
+
+    phys->lineCapacity = level->lineCapacity;
+    phys->boostLineCapacity = level->boostLineCapacity;
+    phys->cannonCapacity = level->cannonCount;
 
     b2WorldDef worldDef = b2DefaultWorldDef();
     // Gravity is always on — drawn strokes are static (Line Rider style) and the
@@ -220,15 +273,28 @@ void PhysicsStartSimulation(PhysicsWorld *phys)
     if (!phys->valid || phys->simulating) return;
 
     phys->simulating = true;
+    phys->trailCount = 0;
+    phys->trailStepCounter = 0;
+    for (int i = 0; i < MAX_CANNONS; i++) phys->cannons[i].cooldown = 0.0f;
 
     if (b2Body_IsValid(phys->ballId))
     {
         // Ball was created disabled — Start is the only mutation the world ever sees,
         // so the post-Start run is a pure function of (level, strokes, tunables).
         b2Body_Enable(phys->ballId);
-        // Initial downward kick on top of gravity (admin tunable)
-        if (phys->tunables.dropForce > 0.0f)
+
+        if (phys->checkpointSet)
         {
+            // Resume mid-run from the flagged ghost sample: position, spin and
+            // velocity are restored exactly as recorded — an iteration tool, so
+            // track edited before the flag won't retroactively change this state
+            b2Body_SetTransform(phys->ballId, ToB2(phys->checkpoint.pos), b2MakeRot(phys->checkpoint.angle));
+            b2Body_SetLinearVelocity(phys->ballId, ToB2(phys->checkpoint.vel));
+            b2Body_SetAngularVelocity(phys->ballId, phys->checkpoint.angularVel);
+        }
+        else if (phys->tunables.dropForce > 0.0f)
+        {
+            // Initial downward kick on top of gravity (admin tunable)
             b2Body_SetLinearVelocity(phys->ballId, (b2Vec2){ 0.0f, phys->tunables.dropForce });
         }
     }
@@ -242,6 +308,13 @@ void PhysicsStopSimulation(PhysicsWorld *phys)
 
     phys->simulating = false;
     phys->accumulator = 0.0f;
+
+    // The finished recording becomes the ghost trail shown during build
+    if (phys->trailCount >= 2)
+    {
+        memcpy(phys->ghost, phys->trail, (size_t)phys->trailCount * sizeof(TrailSample));
+        phys->ghostCount = phys->trailCount;
+    }
 
     if (b2Body_IsValid(phys->ballId))
     {
@@ -280,6 +353,89 @@ static void ApplyBoostZones(PhysicsWorld *phys)
     b2Body_ApplyForceToCenter(phys->ballId, force, true);
 }
 
+// While the ball is near a boost line, push it along the stroke's drawn
+// direction — unlike boost zones this steers, not just accelerates
+static void ApplyBoostLines(PhysicsWorld *phys)
+{
+    if (!b2Body_IsValid(phys->ballId)) return;
+
+    Vector2 ball = FromB2(b2Body_GetPosition(phys->ballId));
+
+    // Nearest segment across all lines wins so overlapping lines never stack
+    float bestDist = BOOST_LINE_RADIUS;
+    Vector2 bestTangent = { 0.0f, 0.0f };
+    for (int l = 0; l < MAX_BOOST_LINES; l++)
+    {
+        const BoostLine *line = &phys->boostLines[l];
+        if (!line->active) continue;
+
+        for (int i = 0; i < line->pointCount - 1; i++)
+        {
+            Vector2 tangent = { 0 };
+            float d = PointSegmentDist(ball, line->points[i], line->points[i + 1], &tangent);
+            if (d < bestDist)
+            {
+                bestDist = d;
+                bestTangent = tangent;
+            }
+        }
+    }
+
+    if ((bestTangent.x == 0.0f) && (bestTangent.y == 0.0f)) return;
+
+    float mass = b2Body_GetMass(phys->ballId);
+    b2Vec2 force = { bestTangent.x * BOOST_LINE_ACCEL * mass, bestTangent.y * BOOST_LINE_ACCEL * mass };
+    b2Body_ApplyForceToCenter(phys->ballId, force, true);
+}
+
+// Ball entering a cannon's muzzle circle is relaunched along the barrel.
+// The cooldown stops the same cannon re-firing every step while the ball leaves.
+static void ApplyCannons(PhysicsWorld *phys, float step)
+{
+    if (!b2Body_IsValid(phys->ballId)) return;
+
+    Vector2 ball = FromB2(b2Body_GetPosition(phys->ballId));
+    for (int i = 0; i < MAX_CANNONS; i++)
+    {
+        Cannon *cannon = &phys->cannons[i];
+        if (!cannon->active) continue;
+
+        if (cannon->cooldown > 0.0f)
+        {
+            cannon->cooldown -= step;
+            continue;
+        }
+
+        float dx = ball.x - cannon->pos.x;
+        float dy = ball.y - cannon->pos.y;
+        if ((dx * dx + dy * dy) > (CANNON_ENTRY_RADIUS * CANNON_ENTRY_RADIUS)) continue;
+
+        b2Vec2 blast = {
+            cosf(cannon->angleRad) * CANNON_BLAST_SPEED,
+            sinf(cannon->angleRad) * CANNON_BLAST_SPEED
+        };
+        b2Body_SetTransform(phys->ballId, ToB2(cannon->pos), b2Body_GetRotation(phys->ballId));
+        b2Body_SetLinearVelocity(phys->ballId, blast);
+        cannon->cooldown = CANNON_COOLDOWN;
+    }
+}
+
+// Sample the ball every TRAIL_SAMPLE_STRIDE fixed steps for the ghost trail
+static void RecordTrailSample(PhysicsWorld *phys)
+{
+    if (!b2Body_IsValid(phys->ballId)) return;
+
+    phys->trailStepCounter++;
+    if ((phys->trailStepCounter % TRAIL_SAMPLE_STRIDE) != 0) return;
+    if (phys->trailCount >= TRAIL_MAX_SAMPLES) return;
+
+    TrailSample *sample = &phys->trail[phys->trailCount++];
+    sample->pos = FromB2(b2Body_GetPosition(phys->ballId));
+    sample->vel = FromB2(b2Body_GetLinearVelocity(phys->ballId));
+    sample->angle = b2Rot_GetAngle(b2Body_GetRotation(phys->ballId));
+    sample->angularVel = b2Body_GetAngularVelocity(phys->ballId);
+}
+
 void PhysicsStep(PhysicsWorld *phys, float dt)
 {
     if (!phys->valid || !phys->simulating) return;
@@ -292,7 +448,10 @@ void PhysicsStep(PhysicsWorld *phys, float dt)
     while (phys->accumulator >= step)
     {
         ApplyBoostZones(phys);
+        ApplyBoostLines(phys);
+        ApplyCannons(phys, step);
         b2World_Step(phys->worldId, step, PHYSICS_SUBSTEPS);
+        RecordTrailSample(phys);
         phys->accumulator -= step;
     }
 }
@@ -484,5 +643,153 @@ bool PhysicsEraseAtPoint(PhysicsWorld *phys, Vector2 worldPoint)
     phys->drawn[slot].active = false;
     phys->drawn[slot].bodyId = b2_nullBodyId;
     phys->drawn[slot].pointCount = 0;
+    return true;
+}
+
+//----------------------------------------------------------------------------------
+// Boost lines and cannons (build resources — no Box2D bodies)
+//----------------------------------------------------------------------------------
+int PhysicsCreateBoostLine(PhysicsWorld *phys, const Vector2 *worldPoints, int count)
+{
+    if (!phys->valid || (count < 2)) return -1;
+
+    for (int i = 0; i < MAX_BOOST_LINES; i++)
+    {
+        BoostLine *line = &phys->boostLines[i];
+        if (line->active) continue;
+
+        line->active = true;
+        line->pointCount = (count < MAX_STROKE_POINTS) ? count : MAX_STROKE_POINTS;
+        for (int p = 0; p < line->pointCount; p++) line->points[p] = worldPoints[p];
+        return i;
+    }
+
+    TraceLog(LOG_WARNING, "PHYSICS: more than %d boost lines", MAX_BOOST_LINES);
+    return -1;
+}
+
+bool PhysicsEraseBoostLineAt(PhysicsWorld *phys, Vector2 worldPoint)
+{
+    const float pad = STROKE_PHYSICS_RADIUS + 8.0f;
+    for (int i = 0; i < MAX_BOOST_LINES; i++)
+    {
+        BoostLine *line = &phys->boostLines[i];
+        if (!line->active) continue;
+
+        for (int p = 0; p < line->pointCount - 1; p++)
+        {
+            Vector2 tangent = { 0 };
+            if (PointSegmentDist(worldPoint, line->points[p], line->points[p + 1], &tangent) <= pad)
+            {
+                line->active = false;
+                line->pointCount = 0;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+int PhysicsAddCannon(PhysicsWorld *phys, Vector2 pos, float angleRad)
+{
+    if (!phys->valid) return -1;
+
+    for (int i = 0; i < MAX_CANNONS; i++)
+    {
+        Cannon *cannon = &phys->cannons[i];
+        if (cannon->active) continue;
+
+        cannon->active = true;
+        cannon->pos = pos;
+        cannon->angleRad = angleRad;
+        cannon->cooldown = 0.0f;
+        return i;
+    }
+    return -1;
+}
+
+bool PhysicsEraseCannonAt(PhysicsWorld *phys, Vector2 worldPoint)
+{
+    for (int i = 0; i < MAX_CANNONS; i++)
+    {
+        Cannon *cannon = &phys->cannons[i];
+        if (!cannon->active) continue;
+
+        float dx = worldPoint.x - cannon->pos.x;
+        float dy = worldPoint.y - cannon->pos.y;
+        if ((dx * dx + dy * dy) <= (CANNON_ENTRY_RADIUS * CANNON_ENTRY_RADIUS))
+        {
+            cannon->active = false;
+            return true;
+        }
+    }
+    return false;
+}
+
+int PhysicsActiveCannonCount(const PhysicsWorld *phys)
+{
+    int count = 0;
+    for (int i = 0; i < MAX_CANNONS; i++)
+    {
+        if (phys->cannons[i].active) count++;
+    }
+    return count;
+}
+
+//----------------------------------------------------------------------------------
+// Ink accounting — recomputed from live geometry so erasing refunds for free
+//----------------------------------------------------------------------------------
+float PhysicsDrawnInkUsed(const PhysicsWorld *phys)
+{
+    float used = 0.0f;
+    for (int i = 0; i < MAX_DRAWN_BODIES; i++)
+    {
+        const DrawnBody *drawn = &phys->drawn[i];
+        if (!drawn->active) continue;
+        used += PolylineLength(drawn->localPoints, drawn->pointCount);
+    }
+    return used;
+}
+
+float PhysicsBoostInkUsed(const PhysicsWorld *phys)
+{
+    float used = 0.0f;
+    for (int i = 0; i < MAX_BOOST_LINES; i++)
+    {
+        const BoostLine *line = &phys->boostLines[i];
+        if (!line->active) continue;
+        used += PolylineLength(line->points, line->pointCount);
+    }
+    return used;
+}
+
+//----------------------------------------------------------------------------------
+// Checkpoint
+//----------------------------------------------------------------------------------
+bool PhysicsSetCheckpointNear(PhysicsWorld *phys, Vector2 p)
+{
+    float bestDistSq = CHECKPOINT_SNAP_RADIUS * CHECKPOINT_SNAP_RADIUS;
+    int bestIndex = -1;
+    for (int i = 0; i < phys->ghostCount; i++)
+    {
+        float dx = p.x - phys->ghost[i].pos.x;
+        float dy = p.y - phys->ghost[i].pos.y;
+        float distSq = dx * dx + dy * dy;
+        if (distSq < bestDistSq)
+        {
+            bestDistSq = distSq;
+            bestIndex = i;
+        }
+    }
+
+    if (bestIndex < 0)
+    {
+        // Click away from the trail clears the flag
+        phys->checkpointSet = false;
+        return false;
+    }
+
+    phys->checkpoint = phys->ghost[bestIndex]; // copied — survives newer ghost runs
+    phys->checkpointSet = true;
     return true;
 }

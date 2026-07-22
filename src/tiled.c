@@ -52,6 +52,36 @@ static bool ParseIntAttr(const char *tag, const char *attr, int *out)
     return true;
 }
 
+// Find `<property name="<propName>" ... value="...">` anywhere in the document
+// (Tiled property names are unique per map in this project) and read its value.
+// Required properties fail loud so a map missing its parameters never half-loads.
+static bool ParsePropertyFloat(const char *xml, const char *propName, float *out)
+{
+    char needle[96];
+    snprintf(needle, sizeof(needle), "<property name=\"%s\"", propName);
+
+    const char *tag = strstr(xml, needle);
+    if (tag == NULL)
+    {
+        TraceLog(LOG_ERROR, "TILED: required custom property \"%s\" not found (add it in Tiled)", propName);
+        return false;
+    }
+    if (!ParseFloatAttr(tag, " value=\"", out))
+    {
+        TraceLog(LOG_ERROR, "TILED: custom property \"%s\" has no value attribute", propName);
+        return false;
+    }
+    return true;
+}
+
+static bool ParsePropertyInt(const char *xml, const char *propName, int *out)
+{
+    float v = 0.0f;
+    if (!ParsePropertyFloat(xml, propName, &v)) return false;
+    *out = (int)v;
+    return true;
+}
+
 // Parse CSV ints between <data encoding="csv"> and </data>. Returns count.
 static int ParseCsv(const char *dataStart, int *out, int maxCount)
 {
@@ -486,6 +516,19 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     int tileCount = ok ? tmp.mapWidth * tmp.mapHeight : 0;
     ok = ok && ParseTileLayer(xml, "terrain", tmp.terrainGids, tileCount);
 
+    // Level parameters (required). Authored in tile-widths of ink; converted to
+    // canvas pixels below once the letterbox scale is known.
+    float lineCapacityTiles = 0.0f;
+    float boostLineCapacityTiles = 0.0f;
+    ok = ok && ParsePropertyFloat(xml, "line-capacity", &lineCapacityTiles);
+    ok = ok && ParsePropertyFloat(xml, "boost_line-capacity", &boostLineCapacityTiles);
+    ok = ok && ParsePropertyInt(xml, "cannon-count", &tmp.cannonCount);
+    if (ok && ((lineCapacityTiles < 0.0f) || (boostLineCapacityTiles < 0.0f) || (tmp.cannonCount < 0)))
+    {
+        TraceLog(LOG_ERROR, "TILED: level parameters must be >= 0");
+        ok = false;
+    }
+
     Vector2 spawnMap = { 0 };
     if (ok && !ParsePointObject(xml, "ball-spawn", &spawnMap) && !ParsePointObject(xml, "ball", &spawnMap))
     {
@@ -563,6 +606,10 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
         ((float)GAME_SCREEN_HEIGHT - mapPxH * tmp.scale) * 0.5f
     };
 
+    // Ink budgets: authored in tile-widths, spent in canvas pixels
+    tmp.lineCapacity = lineCapacityTiles * (float)tmp.tileWidth * tmp.scale;
+    tmp.boostLineCapacity = boostLineCapacityTiles * (float)tmp.tileWidth * tmp.scale;
+
     static bool fullTileCollision[TILED_MAX_W * TILED_MAX_H];
     for (int i = 0; i < tileCount; i++)
     {
@@ -636,6 +683,9 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
         .name = lvl->name,
         .ballSpawn = spawn,
         .ballRadius = 18.0f,
+        .lineCapacity = lvl->lineCapacity,
+        .boostLineCapacity = lvl->boostLineCapacity,
+        .cannonCount = lvl->cannonCount,
         .finishLine = lvl->finishLine,
         .boxes = lvl->boxes,
         .boxCount = lvl->boxCount,
@@ -647,9 +697,10 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
         .boostCount = lvl->boostCount,
     };
 
-    TraceLog(LOG_INFO, "TILED: loaded %s (%dx%d tiles, %d boxes, %d polygons, %d no-build, %d pits, %d boosts)",
+    TraceLog(LOG_INFO, "TILED: loaded %s (%dx%d tiles, %d boxes, %d polygons, %d no-build, %d pits, %d boosts, ink %.0f/%.0f px, %d cannons)",
              tmxPath, lvl->mapWidth, lvl->mapHeight, lvl->boxCount,
-             lvl->polygonCount, lvl->noBuildCount, lvl->pitCount, lvl->boostCount);
+             lvl->polygonCount, lvl->noBuildCount, lvl->pitCount, lvl->boostCount,
+             lvl->lineCapacity, lvl->boostLineCapacity, lvl->cannonCount);
     return true;
 }
 

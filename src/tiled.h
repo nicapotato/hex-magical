@@ -9,6 +9,11 @@
 *     - Optional polygon/rect objects named "no-build": players cannot sketch inside
 *     - Optional polygon/rect objects named "pit": ball inside = game over
 *     - Optional polygon/rect objects named "boost": ball inside gets a speed boost
+*     - Required custom properties (map or object-layer level):
+*         "line-capacity" (float, tile-widths of crayon ink)
+*         "boost_line-capacity" (float, tile-widths of boost line ink)
+*         "cannon-count" (int, placeable cannons)
+*       Zero disables the resource and hides it from the player HUD.
 *     - CSV-encoded layer data, non-infinite map
 *
 ********************************************************************************************/
@@ -42,6 +47,11 @@ typedef struct TiledLevel
 
     float scale;       // map pixels -> game canvas pixels
     Vector2 offset;    // letterbox offset inside the canvas
+
+    // Build resources from TMX custom properties, converted to canvas pixels
+    float lineCapacity;
+    float boostLineCapacity;
+    int cannonCount;
 
     int terrainGids[TILED_MAX_W * TILED_MAX_H];
     Texture2D tileset;
