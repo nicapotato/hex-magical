@@ -83,6 +83,7 @@ android.*
 *.js
 !src/platform/minshell.html
 !src/platform/shell.html
+!src/platform/web_storage.js
 !Makefile.web
 
 # macOS
