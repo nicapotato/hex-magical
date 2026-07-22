@@ -10,6 +10,7 @@
 #include "physics.h"
 #include "render.h"
 #include "sketch.h"
+#include "tiled.h"
 
 #include "raylib.h"
 
@@ -27,10 +28,34 @@ static SketchState sketch = { 0 };
 static float animTime = 0.0f;
 static bool debugMode = false;
 static bool levelMenuOpen = false;
+static TiledLevel tiledLevel = { 0 };
+static float tiledWatchTimer = 0.0f;
 
 //----------------------------------------------------------------------------------
 // Local helpers
 //----------------------------------------------------------------------------------
+// Registry: built-in LEVELS, plus the Tiled level appended when its .tmx loaded
+static const LevelDef *GetLevelDef(int index)
+{
+    if (index < LEVEL_COUNT) return &LEVELS[index];
+    return &tiledLevel.def;
+}
+
+int GameGetLevelCount(void)
+{
+    return LEVEL_COUNT + (tiledLevel.loaded ? 1 : 0);
+}
+
+const char *GameGetLevelName(int index)
+{
+    return GetLevelDef(index)->name;
+}
+
+static bool IsTiledLevel(int index)
+{
+    return tiledLevel.loaded && (index >= LEVEL_COUNT);
+}
+
 // Letterbox the fixed game canvas into the current window.
 static Rectangle GetGameDestRect(void)
 {
@@ -56,7 +81,7 @@ static Vector2 GetWorldMouse(void)
 
 static void LoadCurrentLevel(void)
 {
-    PhysicsLoadLevel(&physics, &LEVELS[levelIndex]);
+    PhysicsLoadLevel(&physics, GetLevelDef(levelIndex));
     SketchInit(&sketch);
 }
 
@@ -69,7 +94,7 @@ static void StartPlaying(void)
 static void AdvanceLevel(void)
 {
     levelIndex++;
-    if (levelIndex >= LEVEL_COUNT)
+    if (levelIndex >= GameGetLevelCount())
     {
         levelIndex = 0;
         screen = SCREEN_TITLE;
@@ -100,17 +125,18 @@ static int GetLevelSelectKey(void)
 {
     for (int i = 0; i < 9; i++)
     {
-        if (IsKeyPressed(KEY_ONE + i)) return (i < LEVEL_COUNT) ? i : -1;
+        if (IsKeyPressed(KEY_ONE + i)) return (i < GameGetLevelCount()) ? i : -1;
     }
-    if (IsKeyPressed(KEY_ZERO) && (LEVEL_COUNT > 9)) return 9;
+    if (IsKeyPressed(KEY_ZERO) && (GameGetLevelCount() > 9)) return 9;
     return -1;
 }
 
 // [ and ] step backward/forward through all levels; returns new index or -1
 static int GetLevelStepKey(void)
 {
-    if (IsKeyPressed(KEY_LEFT_BRACKET)) return (levelIndex + LEVEL_COUNT - 1) % LEVEL_COUNT;
-    if (IsKeyPressed(KEY_RIGHT_BRACKET)) return (levelIndex + 1) % LEVEL_COUNT;
+    int count = GameGetLevelCount();
+    if (IsKeyPressed(KEY_LEFT_BRACKET)) return (levelIndex + count - 1) % count;
+    if (IsKeyPressed(KEY_RIGHT_BRACKET)) return (levelIndex + 1) % count;
     return -1;
 }
 
@@ -121,6 +147,21 @@ void GameInit(void)
 {
     target = LoadRenderTexture(GAME_SCREEN_WIDTH, GAME_SCREEN_HEIGHT);
     SetTextureFilter(target.texture, TEXTURE_FILTER_BILINEAR);
+
+    // Optional Tiled level — appended to the registry when the .tmx exists.
+    // Candidates cover: running from repo root (make run-mac) and from the binary dir.
+    {
+        const char *candidates[] = { "resources/tile-map.tmx", "../../resources/tile-map.tmx" };
+        for (int i = 0; i < 2; i++)
+        {
+            if (!FileExists(candidates[i])) continue;
+            if (TiledLevelLoad(&tiledLevel, candidates[i])) break;
+        }
+        if (!tiledLevel.loaded)
+        {
+            TraceLog(LOG_WARNING, "TILED: resources/tile-map.tmx not loaded — running with built-in levels only");
+        }
+    }
 
     PhysicsInit(&physics);
     SketchInit(&sketch);
@@ -135,6 +176,20 @@ void GameUpdateDrawFrame(void)
 {
     float dt = GetFrameTime();
     animTime += dt;
+
+    // Hot reload: poll the .tmx every half second; rebuild if saved from Tiled
+    tiledWatchTimer += dt;
+    if (tiledLevel.loaded && (tiledWatchTimer >= 0.5f))
+    {
+        tiledWatchTimer = 0.0f;
+        if (TiledLevelFileChanged(&tiledLevel) && TiledLevelLoad(&tiledLevel, tiledLevel.tmxPath))
+        {
+            if (IsTiledLevel(levelIndex) && (screen != SCREEN_TITLE))
+            {
+                LoadCurrentLevel(); // rebuild physics against the edited geometry
+            }
+        }
+    }
 
 #if !defined(PLATFORM_WEB)
     if (IsKeyPressed(KEY_F11) ||
@@ -186,7 +241,7 @@ void GameUpdateDrawFrame(void)
             }
             else if (levelMenuOpen)
             {
-                for (int i = 0; i < LEVEL_COUNT; i++)
+                for (int i = 0; i < GameGetLevelCount(); i++)
                 {
                     if (CheckCollisionPointRec(worldMouse, RenderGetLevelMenuItemRect(i)))
                     {
@@ -272,9 +327,16 @@ void GameUpdateDrawFrame(void)
         }
         else
         {
-            const LevelDef *level = &LEVELS[levelIndex];
+            const LevelDef *level = GetLevelDef(levelIndex);
             bool showStart = (screen == SCREEN_PLAYING) && !PhysicsIsSimulating(&physics);
-            RenderLevelStatics(level);
+            if (IsTiledLevel(levelIndex))
+            {
+                RenderTiledLevel(&tiledLevel); // tile art carries the visuals
+            }
+            else
+            {
+                RenderLevelStatics(level);
+            }
             RenderPhysics(&physics);
             RenderSketchPreview(&sketch);
             RenderStar(physics.starPos, physics.starRadius, animTime);
@@ -306,6 +368,7 @@ void GameUpdateDrawFrame(void)
 
 void GameUnload(void)
 {
+    TiledLevelUnload(&tiledLevel);
     PhysicsShutdown(&physics);
     UnloadRenderTexture(target);
 }

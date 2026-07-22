@@ -326,7 +326,7 @@ static void DrawLevelMenu(const char *levelName, int levelIndex, bool open, Vect
 
     if (!open) return;
 
-    for (int i = 0; i < LEVEL_COUNT; i++)
+    for (int i = 0; i < GameGetLevelCount(); i++)
     {
         Rectangle item = RenderGetLevelMenuItemRect(i);
         bool hover = CheckCollisionPointRec(uiMouse, item);
@@ -337,7 +337,7 @@ static void DrawLevelMenu(const char *levelName, int levelIndex, bool open, Vect
                    : (Color){ 245, 236, 214, 235 };
         DrawRectangleRec(item, fill);
         DrawRectangleLinesEx(item, 1.0f, CRAYON_BROWN);
-        DrawText(TextFormat("%d. %s", i + 1, LEVELS[i].name),
+        DrawText(TextFormat("%d. %s", i + 1, GameGetLevelName(i)),
                  (int)item.x + 8, (int)item.y + 5, 16,
                  current ? PAPER : INK_BROWN);
     }
