@@ -26,10 +26,10 @@
 
 #include <stdbool.h>
 
-#define TILED_MAX_W 64
-#define TILED_MAX_H 64
-#define TILED_MAX_BOXES 256
-#define TILED_MAX_POLYGONS 512
+#define TILED_MAX_W 256
+#define TILED_MAX_H 256
+#define TILED_MAX_BOXES 1024
+#define TILED_MAX_POLYGONS 2048
 #define TILED_MAX_ZONES 8
 
 typedef struct TiledLevel
@@ -45,8 +45,8 @@ typedef struct TiledLevel
     int tileWidth;     // map pixels
     int tileHeight;
 
-    float scale;       // map pixels -> game canvas pixels
-    Vector2 offset;    // letterbox offset inside the canvas
+    float scale;       // map pixels -> game canvas pixels (1.0 = Tiled 1:1)
+    Vector2 offset;    // centers the map on the design canvas
 
     // Build resources from TMX custom properties, converted to canvas pixels
     float lineCapacity;

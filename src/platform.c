@@ -19,7 +19,10 @@
 void PlatformInit(void)
 {
 #if !defined(_DEBUG)
-    SetTraceLogLevel(LOG_NONE);         // Disable raylib trace log messages
+    // Keep errors visible so TMX authoring mistakes (oversized maps, missing
+    // properties, empty terrain) show up in the terminal instead of silently
+    // dropping levels from the registry. Raylib INFO/DEBUG stay quiet.
+    SetTraceLogLevel(LOG_ERROR);
 #endif
 }
 

@@ -40,8 +40,8 @@ static float runTime = 0.0f;    // seconds since Start, frozen at win
 static float viewZoom = 1.0f;
 static Vector2 viewPan = { 0.0f, 0.0f }; // camera target offset from level center
 
-#define VIEW_ZOOM_MIN 0.5f
-#define VIEW_ZOOM_MAX 2.5f
+#define VIEW_ZOOM_MIN 0.15f // zoom out enough to survey large 1:1 Tiled maps
+#define VIEW_ZOOM_MAX 4.0f
 #define VIEW_ZOOM_RATE 1.5f // exponential zoom speed per second while +/- held
 #define VIEW_PAN_SPEED 480.0f // world pixels per second at 1x zoom
 
@@ -102,9 +102,20 @@ static void LoadTiledLevels(const char *dir)
 
     for (unsigned int i = 0; (i < files.count) && (tiledLevelCount < MAX_TILED_LEVELS); i++)
     {
+        // Fail loud to stderr: platform.c sets LOG_NONE in release, which would
+        // otherwise swallow TiledLevelLoad TraceLog errors and silently skip maps.
         if (TiledLevelLoad(&tiledLevels[tiledLevelCount], files.paths[i]))
         {
+            fprintf(stderr, "LEVEL: loaded [%d] %s (%dx%d)\n",
+                    tiledLevelCount,
+                    tiledLevels[tiledLevelCount].name,
+                    tiledLevels[tiledLevelCount].mapWidth,
+                    tiledLevels[tiledLevelCount].mapHeight);
             tiledLevelCount++;
+        }
+        else
+        {
+            fprintf(stderr, "LEVEL: skipped %s (see TILED errors above)\n", files.paths[i]);
         }
     }
 

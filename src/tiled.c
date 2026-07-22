@@ -595,12 +595,12 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
         return false;
     }
 
-    // Fit the map into the game canvas (letterboxed, centered)
+    // 1:1 with Tiled — map pixels are canvas pixels (no fit-to-screen shrink).
+    // Offset centers the map on the design canvas; large maps extend past the
+    // view and are navigated with WASD pan / +/- zoom.
     float mapPxW = (float)(tmp.mapWidth * tmp.tileWidth);
     float mapPxH = (float)(tmp.mapHeight * tmp.tileHeight);
-    tmp.scale = ((float)GAME_SCREEN_WIDTH / mapPxW < (float)GAME_SCREEN_HEIGHT / mapPxH)
-              ? (float)GAME_SCREEN_WIDTH / mapPxW
-              : (float)GAME_SCREEN_HEIGHT / mapPxH;
+    tmp.scale = 1.0f;
     tmp.offset = (Vector2){
         ((float)GAME_SCREEN_WIDTH - mapPxW * tmp.scale) * 0.5f,
         ((float)GAME_SCREEN_HEIGHT - mapPxH * tmp.scale) * 0.5f

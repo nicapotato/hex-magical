@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="60" height="30" tilewidth="16" tileheight="16" infinite="0" nextlayerid="3" nextobjectid="6">
+<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="60" height="30" tilewidth="16" tileheight="16" infinite="0" nextlayerid="4" nextobjectid="7">
  <tileset firstgid="1" source="tileset.tsx"/>
  <layer id="1" name="terrain" width="60" height="30">
   <data encoding="csv">
@@ -37,9 +37,11 @@
  </layer>
  <objectgroup id="2" name="game">
   <properties>
-   <property name="boost_line-capacity" type="float" value="0"/>
+   
+   <property name="boost_line-capacity" type="float" value="20000"/>
    <property name="cannon-count" type="int" value="3"/>
-   <property name="line-capacity" type="float" value="10"/>
+   <property name="line-capacity" type="float" value="20000"/>
+  
   </properties>
   <object id="1" name="pit" x="372" y="457.333">
    <polygon points="0,0 -1.33333,24 108,22.6667 120,6.66667 121.333,-26.6667"/>
@@ -57,4 +59,5 @@
    <polygon points="0,0 236,276 214.667,428 372,389.333 420,209.333 604,72 600,-28 -2.66667,-24"/>
   </object>
  </objectgroup>
+ <imagelayer id="3" name="test"/>
 </map>

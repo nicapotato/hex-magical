@@ -3,6 +3,9 @@
     "expandedProjectPaths": [
     ],
     "fileStates": {
+        ":/automap-tiles.tsx": {
+            "scaleInDock": 1
+        },
         "map-2.tmx": {
             "expandedGroupLayers": [
                 3
@@ -10,11 +13,11 @@
             "expandedObjectLayers": [
                 4
             ],
-            "scale": 1,
-            "selectedLayer": 2,
+            "scale": 3,
+            "selectedLayer": 0,
             "viewCenter": {
-                "x": 346,
-                "y": 210
+                "x": 142.5,
+                "y": 218.33333333333331
             }
         },
         "map-3.tmx": {
@@ -22,18 +25,45 @@
                 2
             ],
             "scale": 0.75,
+            "selectedLayer": 2,
+            "viewCenter": {
+                "x": 476.6666666666667,
+                "y": 316
+            }
+        },
+        "map-4.tmx": {
+            "expandedObjectLayers": [
+                2
+            ],
+            "scale": 0.25,
             "selectedLayer": 1,
             "viewCenter": {
-                "x": 440,
-                "y": 356
+                "x": 1592,
+                "y": 1436
+            }
+        },
+        "map-5.tmx": {
+            "scale": 0.75,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 458.6666666666667,
+                "y": 413.33333333333337
+            }
+        },
+        "map-template.tmx": {
+            "scale": 0.70953125,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 472.84739044263387,
+                "y": 294.56066945606693
             }
         },
         "rules/auto-tile-rules.tmx": {
             "scale": 2,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 182,
-                "y": 176.5
+                "x": 130.25,
+                "y": 119.5
             }
         },
         "tile-map.tmx": {
@@ -46,11 +76,12 @@
             "scale": 1.5,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 241.33333333333334,
+                "x": 199.33333333333334,
                 "y": 213.33333333333334
             }
         },
         "tileset.tsx": {
+            "scaleInDock": 1,
             "scaleInEditor": 2
         }
     },
@@ -61,12 +92,16 @@
     "openFiles": [
     ],
     "project": "hex-magical-test.tiled-project",
-    "property.type": "int",
+    "property.type": "float",
     "recentFiles": [
-        "map-3.tmx",
-        "rules/auto-tile-rules.tmx",
+        "map-4.tmx",
+        "map-5.tmx",
+        "map-template.tmx",
         "tileset.tsx",
-        "map-2.tmx"
+        "rules/auto-tile-rules.tmx",
+        "map-2.tmx",
+        "map-3.tmx",
+        "tile-map.tmx"
     ],
     "tileset.lastUsedFormat": "tsx",
     "tileset.tileSize": {
