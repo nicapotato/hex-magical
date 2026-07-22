@@ -193,9 +193,8 @@ void RenderPhysicsDebug(PhysicsWorld *phys, const LevelDef *level)
     // Ball collision circle (magenta) from live Box2D transform
     DrawDebugBodyShapes(phys->ballId, (Color){ 255, 60, 200, 255 });
 
-    // Star win radius (yellow dashed-ish ring)
-    DrawCircleLinesV(phys->starPos, phys->starRadius, (Color){ 255, 220, 40, 255 });
-    DrawDebugCross(phys->starPos, 8.0f, (Color){ 255, 220, 40, 255 });
+    // Finish-line win area
+    DrawRectangleLinesEx(phys->finishLine, 2.0f, (Color){ 255, 220, 40, 255 });
 }
 
 void RenderSketchPreview(const SketchState *sketch)
@@ -204,24 +203,30 @@ void RenderSketchPreview(const SketchState *sketch)
     DrawCrayonPolyline(sketch->points, sketch->pointCount, sketch->crayonColor, STROKE_PHYSICS_RADIUS * 2.0f);
 }
 
-void RenderStar(Vector2 pos, float radius, float time)
+void RenderFinishLine(Rectangle bounds)
 {
-    float pulse = 1.0f + 0.08f * sinf(time * 4.0f);
-    float r = radius * pulse;
-    Vector2 pts[11];
-    for (int i = 0; i < 10; i++)
-    {
-        float a = -PI * 0.5f + (float)i * (PI / 5.0f);
-        float rr = (i % 2 == 0)? r : r * 0.45f;
-        pts[i].x = pos.x + cosf(a) * rr;
-        pts[i].y = pos.y + sinf(a) * rr;
-    }
-    pts[10] = pts[0];
-    DrawCrayonPolyline(pts, 11, STAR_YELLOW, 3.0f);
-
     Color fill = STAR_YELLOW;
-    fill.a = 90;
-    DrawCircleV(pos, r * 0.35f, fill);
+    fill.a = 45;
+    DrawRectangleRec(bounds, fill);
+
+    const int rows = 8;
+    float cellHeight = bounds.height / (float)rows;
+    float cellWidth = bounds.width * 0.5f;
+    for (int row = 0; row < rows; row++)
+    {
+        for (int col = 0; col < 2; col++)
+        {
+            if (((row + col) % 2) != 0) continue;
+            Rectangle cell = {
+                bounds.x + (float)col * cellWidth,
+                bounds.y + (float)row * cellHeight,
+                cellWidth,
+                cellHeight
+            };
+            DrawRectangleRec(cell, STAR_YELLOW);
+        }
+    }
+    DrawRectangleLinesEx(bounds, 3.0f, STAR_YELLOW);
 }
 
 void RenderBall(Vector2 pos, float radius, float angle)

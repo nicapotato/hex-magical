@@ -58,8 +58,7 @@ typedef struct PhysicsWorld
     float ballRadius;
     Vector2 ballSpawn; // level spawn — Stop resets the ball here
 
-    Vector2 starPos;
-    float starRadius;
+    Rectangle finishLine;
 
     DrawnBody drawn[MAX_DRAWN_BODIES];
     int drawnCount;

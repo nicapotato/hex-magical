@@ -18,7 +18,7 @@ void RenderPaperBackground(void);
 void RenderPhysics(PhysicsWorld *phys);
 void RenderPhysicsDebug(PhysicsWorld *phys, const LevelDef *level);
 void RenderSketchPreview(const SketchState *sketch);
-void RenderStar(Vector2 pos, float radius, float time);
+void RenderFinishLine(Rectangle bounds);
 void RenderBall(Vector2 pos, float radius, float angle);
 // uiMouse is the mouse position in game-canvas coordinates (letterbox-corrected).
 // showPlayButton shows the START/STOP toggle; simulating selects its label.

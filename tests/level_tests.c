@@ -4,7 +4,7 @@
 *
 *   For every .solution file (resources/solutions/ by default, or files passed as
 *   args): load the level it names, recreate its strokes, Start, and step Box2D at
-*   the game's fixed 60 Hz until the ball reaches the star or the step budget runs
+*   the game's fixed 60 Hz until the ball reaches the finish line or the step budget runs
 *   out. No window, no rendering, no sleeping — the whole suite runs in milliseconds.
 *
 *   Output is one line per solution, built for humans and agents alike:

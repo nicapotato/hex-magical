@@ -24,8 +24,7 @@ typedef struct LevelDef
     const char *name;
     Vector2 ballSpawn;
     float ballRadius;
-    Vector2 starPos;
-    float starRadius;
+    Rectangle finishLine;
     const StaticBox *boxes;
     int boxCount;
 } LevelDef;

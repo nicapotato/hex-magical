@@ -119,6 +119,27 @@ static bool ParsePointObject(const char *xml, const char *objectName, Vector2 *o
     return true;
 }
 
+static bool ParseRectangleObject(const char *xml, const char *objectName, Rectangle *out)
+{
+    const char *obj = FindObjectTag(xml, objectName);
+    if (obj == NULL) return false;
+
+    if (!ParseFloatAttr(obj, " x=\"", &out->x)
+        || !ParseFloatAttr(obj, " y=\"", &out->y)
+        || !ParseFloatAttr(obj, " width=\"", &out->width)
+        || !ParseFloatAttr(obj, " height=\"", &out->height))
+    {
+        TraceLog(LOG_ERROR, "TILED: rectangle \"%s\" missing x/y/width/height", objectName);
+        return false;
+    }
+    if ((out->width <= 0.0f) || (out->height <= 0.0f))
+    {
+        TraceLog(LOG_ERROR, "TILED: rectangle \"%s\" must have positive width and height", objectName);
+        return false;
+    }
+    return true;
+}
+
 // Parse every object named "no-build" (polygon or rect) into zones (map coords)
 static int ParseNoBuildZones(const char *xml, NoBuildZone *zones, int maxZones)
 {
@@ -297,15 +318,16 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     ok = ok && ParseTileLayer(xml, "prototype", prototypeGids, tileCount);
     ok = ok && ParseTileLayer(xml, "terrain", tmp.terrainGids, tileCount);
 
-    Vector2 spawnMap = { 0 }, goalMap = { 0 };
+    Vector2 spawnMap = { 0 };
+    Rectangle finishMap = { 0 };
     if (ok && !ParsePointObject(xml, "ball-spawn", &spawnMap) && !ParsePointObject(xml, "ball", &spawnMap))
     {
         TraceLog(LOG_ERROR, "TILED: no spawn point object (name it \"ball-spawn\" or \"ball\")");
         ok = false;
     }
-    if (ok && !ParsePointObject(xml, "level-goal", &goalMap))
+    if (ok && !ParseRectangleObject(xml, "finish-line", &finishMap))
     {
-        TraceLog(LOG_ERROR, "TILED: point object \"level-goal\" not found");
+        TraceLog(LOG_ERROR, "TILED: rectangle object \"finish-line\" not found");
         ok = false;
     }
 
@@ -379,7 +401,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     }
 
     // Headless (level-tests): no GL context — skip tileset art; collision boxes,
-    // spawn/goal, and LevelDef all parse from text and work without a window
+    // spawn/finish line, and LevelDef all parse from text and work without a window
     char pngPath[512];
     snprintf(pngPath, sizeof(pngPath), "%s/%s", dir, imageName);
     Texture2D tex = { 0 };
@@ -393,9 +415,14 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
         }
     }
 
-    // Canvas coords for spawn/goal/no-build
+    // Canvas coords for spawn/finish line/no-build
     Vector2 spawn = { tmp.offset.x + spawnMap.x * tmp.scale, tmp.offset.y + spawnMap.y * tmp.scale };
-    Vector2 goal = { tmp.offset.x + goalMap.x * tmp.scale, tmp.offset.y + goalMap.y * tmp.scale };
+    Rectangle finishLine = {
+        tmp.offset.x + finishMap.x * tmp.scale,
+        tmp.offset.y + finishMap.y * tmp.scale,
+        finishMap.width * tmp.scale,
+        finishMap.height * tmp.scale
+    };
     for (int z = 0; z < tmp.noBuildCount; z++)
     {
         for (int i = 0; i < tmp.noBuild[z].pointCount; i++)
@@ -417,8 +444,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
         .name = lvl->name,
         .ballSpawn = spawn,
         .ballRadius = 18.0f,
-        .starPos = goal,
-        .starRadius = 22.0f,
+        .finishLine = finishLine,
         .boxes = lvl->boxes,
         .boxCount = lvl->boxCount,
     };

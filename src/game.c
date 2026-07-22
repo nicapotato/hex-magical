@@ -30,7 +30,6 @@ static GameScreen screen = SCREEN_TITLE;
 static int levelIndex = 0;
 static PhysicsWorld physics = { 0 };
 static SketchState sketch = { 0 };
-static float animTime = 0.0f;
 static bool debugMode = false;
 static bool levelMenuOpen = false;
 static bool winMenuShow = true; // false = admiring the finished run
@@ -363,7 +362,6 @@ void GameInit(void)
     SketchInit(&sketch);
     screen = SCREEN_TITLE;
     levelIndex = 0;
-    animTime = 0.0f;
     debugMode = false;
     levelMenuOpen = false;
 }
@@ -371,7 +369,6 @@ void GameInit(void)
 void GameUpdateDrawFrame(void)
 {
     float dt = GetFrameTime();
-    animTime += dt;
 
     // Hot reload: poll the .tmx files every half second; rebuild if saved from Tiled
     tiledWatchTimer += dt;
@@ -613,7 +610,7 @@ void GameUpdateDrawFrame(void)
                 RenderTiledLevel(GetTiledLevel(levelIndex)); // tile art + no-build overlay
                 RenderPhysics(&physics);
                 RenderSketchPreview(&sketch);
-                RenderStar(physics.starPos, physics.starRadius, animTime);
+                RenderFinishLine(physics.finishLine);
                 RenderBall(PhysicsGetBallPos(&physics), physics.ballRadius, PhysicsGetBallAngle(&physics));
 
                 if (debugMode)

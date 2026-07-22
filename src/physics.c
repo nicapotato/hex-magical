@@ -171,8 +171,7 @@ void PhysicsLoadLevel(PhysicsWorld *phys, const LevelDef *level)
     CreateStaticBoxes(phys, level);
     CreateBall(phys, level);
 
-    phys->starPos = level->starPos;
-    phys->starRadius = level->starRadius;
+    phys->finishLine = level->finishLine;
 }
 
 void PhysicsStartSimulation(PhysicsWorld *phys)
@@ -248,11 +247,7 @@ float PhysicsGetBallAngle(const PhysicsWorld *phys)
 bool PhysicsCheckWin(const PhysicsWorld *phys)
 {
     if (!phys->valid) return false;
-    Vector2 ball = PhysicsGetBallPos(phys);
-    float dx = ball.x - phys->starPos.x;
-    float dy = ball.y - phys->starPos.y;
-    float reach = phys->ballRadius + phys->starRadius;
-    return (dx * dx + dy * dy) <= (reach * reach);
+    return CheckCollisionCircleRec(PhysicsGetBallPos(phys), phys->ballRadius, phys->finishLine);
 }
 
 b2Transform PhysicsGetBodyTransform(b2BodyId bodyId)

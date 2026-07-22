@@ -5,7 +5,8 @@
 *   Conventions expected in the .tmx (strict — load fails loud otherwise):
 *     - Tile layer "prototype": gid 15 = solid collision, anything else = air
 *     - Tile layer "terrain":   visual tiles drawn from tileset.png (same dir as .tmx)
-*     - Point objects named "ball-spawn" (or "ball") and "level-goal"
+*     - Point object named "ball-spawn" (or "ball")
+*     - Rectangle object named "finish-line"
 *     - Optional polygon/rect objects named "no-build": players cannot sketch inside
 *     - CSV-encoded layer data, non-infinite map
 *
