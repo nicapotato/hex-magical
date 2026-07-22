@@ -11,11 +11,11 @@
                 3,
                 4
             ],
-            "scale": 1,
-            "selectedLayer": 1,
+            "scale": 2,
+            "selectedLayer": -1,
             "viewCenter": {
-                "x": 755,
-                "y": 222
+                "x": 519.75,
+                "y": 234
             }
         },
         "rules/auto-tile-rules.tmx": {
@@ -37,8 +37,8 @@
             "scale": 1.5,
             "selectedLayer": 2,
             "viewCenter": {
-                "x": 161.33333333333331,
-                "y": 194
+                "x": 189.66666666666663,
+                "y": 190.66666666666663
             }
         }
     },
