@@ -1,8 +1,8 @@
 {
     "activeFile": "map-5.tmx",
     "expandedProjectPaths": [
-        "rules",
-        "."
+        ".",
+        "rules"
     ],
     "file.lastUsedOpenFilter": "All Files (*)",
     "fileStates": {

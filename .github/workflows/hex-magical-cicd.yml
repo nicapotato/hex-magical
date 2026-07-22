@@ -416,7 +416,9 @@ jobs:
       - build-and-push-web
       - build-and-push-macos
       - build-and-push-windows
+    # !cancelled(): don't let a skipped level-tests upstream skip-propagate here
     if: |
+      !cancelled() &&
       needs.resolve-publish-flags.outputs.publish_s3 == 'true' &&
       needs.read-version.result == 'success' &&
       needs.build-and-push-web.result == 'success' &&

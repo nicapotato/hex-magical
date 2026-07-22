@@ -30,7 +30,7 @@
 #define TILED_MAX_H 256
 #define TILED_MAX_BOXES 1024
 #define TILED_MAX_POLYGONS 2048
-#define TILED_MAX_ZONES 8
+#define TILED_MAX_ZONES 30
 
 typedef struct TiledLevel
 {
