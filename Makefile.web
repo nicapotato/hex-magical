@@ -10,7 +10,7 @@ BOX2D_SRC = $(BOX2D_ROOT)/src
 BOX2D_INC = $(BOX2D_ROOT)/include
 SRC_DIR = src
 BUILD_DIR = bin/wasm
-RESOURCES_DIR = src/resources
+RESOURCES_DIR = resources
 SHELL_HTML = $(SRC_DIR)/platform/shell.html
 
 CC = emcc

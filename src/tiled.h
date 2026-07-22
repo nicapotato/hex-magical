@@ -5,7 +5,8 @@
 *   Conventions expected in the .tmx (strict — load fails loud otherwise):
 *     - Tile layer "prototype": gid 15 = solid collision, anything else = air
 *     - Tile layer "terrain":   visual tiles drawn from tileset.png (same dir as .tmx)
-*     - Point objects named "ball-spawn" and "level-goal"
+*     - Point objects named "ball-spawn" (or "ball") and "level-goal"
+*     - Optional polygon/rect objects named "no-build": players cannot sketch inside
 *     - CSV-encoded layer data, non-infinite map
 *
 ********************************************************************************************/
@@ -21,11 +22,20 @@
 #define TILED_MAX_W 64
 #define TILED_MAX_H 64
 #define TILED_MAX_BOXES 256
+#define TILED_MAX_NOBUILD 8
+#define TILED_MAX_NOBUILD_POINTS 32
+
+typedef struct NoBuildZone
+{
+    Vector2 points[TILED_MAX_NOBUILD_POINTS]; // canvas coords, closed polygon
+    int pointCount;
+} NoBuildZone;
 
 typedef struct TiledLevel
 {
     bool loaded;
     char tmxPath[512];
+    char name[64];
     long modTime;
 
     int mapWidth;      // tiles
@@ -45,6 +55,9 @@ typedef struct TiledLevel
     StaticBox boxes[TILED_MAX_BOXES];
     int boxCount;
 
+    NoBuildZone noBuild[TILED_MAX_NOBUILD];
+    int noBuildCount;
+
     LevelDef def;      // ready to hand to PhysicsLoadLevel (boxes points into this struct)
 } TiledLevel;
 
@@ -56,7 +69,10 @@ void TiledLevelUnload(TiledLevel *lvl);
 // True when the .tmx on disk is newer than what is loaded
 bool TiledLevelFileChanged(const TiledLevel *lvl);
 
-// Draw the terrain tile layer (canvas coordinates)
+// True when the canvas-space point sits inside any no-build zone
+bool TiledLevelNoBuildContains(const TiledLevel *lvl, Vector2 p);
+
+// Draw the terrain tile layer + no-build overlays (canvas coordinates)
 void RenderTiledLevel(const TiledLevel *lvl);
 
 #endif // TILED_H

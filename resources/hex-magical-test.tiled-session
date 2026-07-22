@@ -3,20 +3,42 @@
     "expandedProjectPaths": [
     ],
     "fileStates": {
+        "map-2.tmx": {
+            "expandedGroupLayers": [
+                3
+            ],
+            "expandedObjectLayers": [
+                4,
+                3
+            ],
+            "scale": 1.5,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 161.66666666666666,
+                "y": 174.66666666666666
+            }
+        },
         "rules/auto-tile-rules.tmx": {
             "scale": 3,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 149.83333333333331,
+                "x": 102.83333333333333,
                 "y": 145.66666666666666
             }
         },
         "tile-map.tmx": {
-            "scale": 2,
-            "selectedLayer": 0,
+            "expandedGroupLayers": [
+                4
+            ],
+            "expandedObjectLayers": [
+                4,
+                3
+            ],
+            "scale": 1.5,
+            "selectedLayer": 2,
             "viewCenter": {
-                "x": 207.75,
-                "y": 164.5
+                "x": 161.66666666666666,
+                "y": 194
             }
         }
     },

@@ -15,7 +15,6 @@
 #include <stdbool.h>
 
 void RenderPaperBackground(void);
-void RenderLevelStatics(const LevelDef *level);
 void RenderPhysics(PhysicsWorld *phys);
 void RenderPhysicsDebug(PhysicsWorld *phys, const LevelDef *level);
 void RenderSketchPreview(const SketchState *sketch);

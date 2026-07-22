@@ -92,17 +92,24 @@ static bool ParseTileLayer(const char *xml, const char *layerName, int *out, int
     return true;
 }
 
-static bool ParsePointObject(const char *xml, const char *objectName, Vector2 *out)
+// Objects are written as <object ... name="..." x="..." y="...">; attrs precede the
+// name, so back up to the tag start before reading them
+static const char *FindObjectTag(const char *xml, const char *objectName)
 {
     char needle[64];
     snprintf(needle, sizeof(needle), "name=\"%s\"", objectName);
 
-    const char *obj = strstr(xml, needle);
-    if (obj == NULL)
-    {
-        TraceLog(LOG_ERROR, "TILED: point object \"%s\" not found", objectName);
-        return false;
-    }
+    const char *at = strstr(xml, needle);
+    if (at == NULL) return NULL;
+
+    while ((at > xml) && (*at != '<')) at--;
+    return at;
+}
+
+static bool ParsePointObject(const char *xml, const char *objectName, Vector2 *out)
+{
+    const char *obj = FindObjectTag(xml, objectName);
+    if (obj == NULL) return false;
 
     if (!ParseFloatAttr(obj, " x=\"", &out->x) || !ParseFloatAttr(obj, " y=\"", &out->y))
     {
@@ -110,6 +117,91 @@ static bool ParsePointObject(const char *xml, const char *objectName, Vector2 *o
         return false;
     }
     return true;
+}
+
+// Parse every object named "no-build" (polygon or rect) into zones (map coords)
+static int ParseNoBuildZones(const char *xml, NoBuildZone *zones, int maxZones)
+{
+    int zoneCount = 0;
+    const char *cursor = xml;
+
+    while (zoneCount < maxZones)
+    {
+        const char *match = strstr(cursor, "name=\"no-build\"");
+        if (match == NULL) break;
+        cursor = match + 1; // continue search past this attribute next iteration
+
+        const char *obj = match;
+        while ((obj > xml) && (*obj != '<')) obj--;
+
+        float ox = 0.0f, oy = 0.0f;
+        if (!ParseFloatAttr(obj, " x=\"", &ox) || !ParseFloatAttr(obj, " y=\"", &oy))
+        {
+            TraceLog(LOG_ERROR, "TILED: no-build object missing x/y — skipped");
+            continue;
+        }
+
+        NoBuildZone *zone = &zones[zoneCount];
+        zone->pointCount = 0;
+
+        const char *objEnd = strstr(obj, "</object>");
+        const char *selfClose = strstr(obj, "/>");
+        if ((objEnd == NULL) || ((selfClose != NULL) && (selfClose < objEnd))) objEnd = selfClose;
+
+        const char *poly = strstr(obj, "<polygon points=\"");
+        if ((poly != NULL) && (objEnd != NULL) && (poly < objEnd))
+        {
+            // Polygon: points are "x0,y0 x1,y1 ..." relative to the object origin
+            poly += strlen("<polygon points=\"");
+            const char *q = strchr(poly, '"');
+            while ((poly < q) && (zone->pointCount < TILED_MAX_NOBUILD_POINTS))
+            {
+                char *next = NULL;
+                float px = strtof(poly, &next);
+                if ((next == poly) || (*next != ',')) break;
+                poly = next + 1;
+                float py = strtof(poly, &next);
+                if (next == poly) break;
+                poly = next;
+                zone->points[zone->pointCount++] = (Vector2){ ox + px, oy + py };
+            }
+        }
+        else
+        {
+            // Rectangle object: width/height attrs, origin at top-left
+            float w = 0.0f, h = 0.0f;
+            if (!ParseFloatAttr(obj, " width=\"", &w) || !ParseFloatAttr(obj, " height=\"", &h))
+            {
+                TraceLog(LOG_ERROR, "TILED: no-build object has neither polygon nor width/height — skipped");
+                continue;
+            }
+            zone->points[0] = (Vector2){ ox, oy };
+            zone->points[1] = (Vector2){ ox + w, oy };
+            zone->points[2] = (Vector2){ ox + w, oy + h };
+            zone->points[3] = (Vector2){ ox, oy + h };
+            zone->pointCount = 4;
+        }
+
+        if (zone->pointCount >= 3) zoneCount++;
+        else TraceLog(LOG_ERROR, "TILED: no-build polygon needs >= 3 points — skipped");
+    }
+
+    return zoneCount;
+}
+
+// Ray-cast point-in-polygon (handles concave outlines)
+static bool PolygonContains(const Vector2 *pts, int count, Vector2 p)
+{
+    bool inside = false;
+    for (int i = 0, j = count - 1; i < count; j = i++)
+    {
+        if (((pts[i].y > p.y) != (pts[j].y > p.y)) &&
+            (p.x < (pts[j].x - pts[i].x) * (p.y - pts[i].y) / (pts[j].y - pts[i].y) + pts[i].x))
+        {
+            inside = !inside;
+        }
+    }
+    return inside;
 }
 
 //----------------------------------------------------------------------------------
@@ -206,8 +298,18 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     ok = ok && ParseTileLayer(xml, "terrain", tmp.terrainGids, tileCount);
 
     Vector2 spawnMap = { 0 }, goalMap = { 0 };
-    ok = ok && ParsePointObject(xml, "ball-spawn", &spawnMap);
-    ok = ok && ParsePointObject(xml, "level-goal", &goalMap);
+    if (ok && !ParsePointObject(xml, "ball-spawn", &spawnMap) && !ParsePointObject(xml, "ball", &spawnMap))
+    {
+        TraceLog(LOG_ERROR, "TILED: no spawn point object (name it \"ball-spawn\" or \"ball\")");
+        ok = false;
+    }
+    if (ok && !ParsePointObject(xml, "level-goal", &goalMap))
+    {
+        TraceLog(LOG_ERROR, "TILED: point object \"level-goal\" not found");
+        ok = false;
+    }
+
+    if (ok) tmp.noBuildCount = ParseNoBuildZones(xml, tmp.noBuild, TILED_MAX_NOBUILD);
 
     UnloadFileText(xml);
     if (!ok) return false;
@@ -285,9 +387,17 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
         return false;
     }
 
-    // Canvas coords for spawn/goal
+    // Canvas coords for spawn/goal/no-build
     Vector2 spawn = { tmp.offset.x + spawnMap.x * tmp.scale, tmp.offset.y + spawnMap.y * tmp.scale };
     Vector2 goal = { tmp.offset.x + goalMap.x * tmp.scale, tmp.offset.y + goalMap.y * tmp.scale };
+    for (int z = 0; z < tmp.noBuildCount; z++)
+    {
+        for (int i = 0; i < tmp.noBuild[z].pointCount; i++)
+        {
+            tmp.noBuild[z].points[i].x = tmp.offset.x + tmp.noBuild[z].points[i].x * tmp.scale;
+            tmp.noBuild[z].points[i].y = tmp.offset.y + tmp.noBuild[z].points[i].y * tmp.scale;
+        }
+    }
 
     // Commit: replace previous state
     if (lvl->loaded) UnloadTexture(lvl->tileset);
@@ -295,9 +405,10 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     lvl->tileset = tex;
     lvl->modTime = GetFileModTime(tmxPath);
     lvl->loaded = true;
+    snprintf(lvl->name, sizeof(lvl->name), "Tiled: %s", GetFileNameWithoutExt(tmxPath));
 
     lvl->def = (LevelDef){
-        .name = "Tiled: tile-map",
+        .name = lvl->name,
         .ballSpawn = spawn,
         .ballRadius = 18.0f,
         .starPos = goal,
@@ -306,7 +417,8 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
         .boxCount = lvl->boxCount,
     };
 
-    TraceLog(LOG_INFO, "TILED: loaded %s (%dx%d tiles, %d collision boxes)", tmxPath, lvl->mapWidth, lvl->mapHeight, lvl->boxCount);
+    TraceLog(LOG_INFO, "TILED: loaded %s (%dx%d tiles, %d collision boxes, %d no-build zones)",
+             tmxPath, lvl->mapWidth, lvl->mapHeight, lvl->boxCount, lvl->noBuildCount);
     return true;
 }
 
@@ -320,6 +432,54 @@ bool TiledLevelFileChanged(const TiledLevel *lvl)
 {
     if (!lvl->loaded) return false;
     return GetFileModTime(lvl->tmxPath) != lvl->modTime;
+}
+
+bool TiledLevelNoBuildContains(const TiledLevel *lvl, Vector2 p)
+{
+    if (!lvl->loaded) return false;
+    for (int z = 0; z < lvl->noBuildCount; z++)
+    {
+        if (PolygonContains(lvl->noBuild[z].points, lvl->noBuild[z].pointCount, p)) return true;
+    }
+    return false;
+}
+
+static void DrawNoBuildZones(const TiledLevel *lvl)
+{
+    const Color fill = { 210, 50, 50, 28 };     // faint red wash
+    const Color outline = { 210, 50, 50, 110 }; // soft crayon boundary
+
+    for (int z = 0; z < lvl->noBuildCount; z++)
+    {
+        const NoBuildZone *zone = &lvl->noBuild[z];
+
+        // Fan fill (fine for the convex-ish zones Tiled produces; outline carries the true shape)
+        for (int i = 1; i < zone->pointCount - 1; i++)
+        {
+            DrawTriangle(zone->points[0], zone->points[i + 1], zone->points[i], fill);
+            DrawTriangle(zone->points[0], zone->points[i], zone->points[i + 1], fill);
+        }
+
+        for (int i = 0; i < zone->pointCount; i++)
+        {
+            Vector2 a = zone->points[i];
+            Vector2 b = zone->points[(i + 1) % zone->pointCount];
+            DrawLineEx(a, b, 3.0f, outline);
+        }
+
+        // Center label so the meaning is readable at a glance
+        Vector2 c = { 0 };
+        for (int i = 0; i < zone->pointCount; i++)
+        {
+            c.x += zone->points[i].x;
+            c.y += zone->points[i].y;
+        }
+        c.x /= (float)zone->pointCount;
+        c.y /= (float)zone->pointCount;
+        const char *label = "no build";
+        int tw = MeasureText(label, 14);
+        DrawText(label, (int)(c.x - (float)tw * 0.5f), (int)c.y - 7, 14, outline);
+    }
 }
 
 void RenderTiledLevel(const TiledLevel *lvl)
@@ -359,4 +519,6 @@ void RenderTiledLevel(const TiledLevel *lvl)
             DrawTexturePro(lvl->tileset, src, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
         }
     }
+
+    DrawNoBuildZones(lvl);
 }

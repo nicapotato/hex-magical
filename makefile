@@ -63,9 +63,9 @@ app-bundle: build
 	chmod +x "$(MACOS_DIR)/$(APP_NAME)"; \
 	cp src/platform/Info.plist "$(CONTENTS_DIR)/Info.plist"; \
 	if [ -f src/platform/raylib.icns ]; then cp src/platform/raylib.icns "$(BUNDLE_RESOURCES_DIR)/"; fi; \
-	if [ -d src/resources ]; then \
-		cp -R src/resources "$(CONTENTS_DIR)/resources"; \
-		cp -R src/resources "$(MACOS_DIR)/resources"; \
+	if [ -d resources ]; then \
+		cp -R resources "$(CONTENTS_DIR)/resources"; \
+		cp -R resources "$(MACOS_DIR)/resources"; \
 	fi; \
 	echo "✅ Created $(APP_BUNDLE)"
 
@@ -80,7 +80,7 @@ package-windows: build
 	rm -rf release; \
 	mkdir -p release; \
 	cp "$$EXE" release/hex-magical.exe 2>/dev/null || cp "$$EXE" release/hex-magical; \
-	if [ -d src/resources ]; then cp -R src/resources release/resources; fi; \
+	if [ -d resources ]; then cp -R resources release/resources; fi; \
 	rm -f hex-magical-windows.zip; \
 	cd release && zip -r ../hex-magical-windows.zip .; \
 	echo "✅ Package ready: hex-magical-windows.zip"

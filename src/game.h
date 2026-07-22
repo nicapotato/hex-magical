@@ -29,7 +29,7 @@ void GameInit(void);              // Load resources / initialize game state
 void GameUpdateDrawFrame(void);   // Update and draw one frame
 void GameUnload(void);            // Unload resources / free game state
 
-// Level registry: built-in LEVELS plus the Tiled level when its .tmx is found
+// Level registry: every Tiled .tmx map found in resources/
 int GameGetLevelCount(void);
 const char *GameGetLevelName(int index);
 

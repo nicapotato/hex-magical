@@ -16,6 +16,9 @@
 
 #include <math.h>
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 //----------------------------------------------------------------------------------
 // Global Variables Definition (local to this module)
@@ -28,22 +31,30 @@ static SketchState sketch = { 0 };
 static float animTime = 0.0f;
 static bool debugMode = false;
 static bool levelMenuOpen = false;
-static TiledLevel tiledLevel = { 0 };
+
+#define MAX_TILED_LEVELS 8
+static TiledLevel tiledLevels[MAX_TILED_LEVELS] = { 0 };
+static int tiledLevelCount = 0;
 static float tiledWatchTimer = 0.0f;
 
 //----------------------------------------------------------------------------------
 // Local helpers
 //----------------------------------------------------------------------------------
-// Registry: built-in LEVELS, plus the Tiled level appended when its .tmx loaded
+// Registry: every Tiled level found in resources/ (the only level source)
+static TiledLevel *GetTiledLevel(int index)
+{
+    if ((index < 0) || (index >= tiledLevelCount)) index = 0;
+    return &tiledLevels[index];
+}
+
 static const LevelDef *GetLevelDef(int index)
 {
-    if (index < LEVEL_COUNT) return &LEVELS[index];
-    return &tiledLevel.def;
+    return &GetTiledLevel(index)->def;
 }
 
 int GameGetLevelCount(void)
 {
-    return LEVEL_COUNT + (tiledLevel.loaded ? 1 : 0);
+    return tiledLevelCount;
 }
 
 const char *GameGetLevelName(int index)
@@ -51,9 +62,35 @@ const char *GameGetLevelName(int index)
     return GetLevelDef(index)->name;
 }
 
-static bool IsTiledLevel(int index)
+// Scan a resources dir for .tmx maps, sorted by filename for a stable level order
+static void LoadTiledLevels(const char *dir)
 {
-    return tiledLevel.loaded && (index >= LEVEL_COUNT);
+    if (!DirectoryExists(dir)) return;
+
+    FilePathList files = LoadDirectoryFilesEx(dir, ".tmx", false);
+
+    // Insertion sort paths by name (LoadDirectoryFilesEx order is filesystem-dependent)
+    for (unsigned int i = 1; i < files.count; i++)
+    {
+        char *key = files.paths[i];
+        int j = (int)i - 1;
+        while ((j >= 0) && (strcmp(files.paths[j], key) > 0))
+        {
+            files.paths[j + 1] = files.paths[j];
+            j--;
+        }
+        files.paths[j + 1] = key;
+    }
+
+    for (unsigned int i = 0; (i < files.count) && (tiledLevelCount < MAX_TILED_LEVELS); i++)
+    {
+        if (TiledLevelLoad(&tiledLevels[tiledLevelCount], files.paths[i]))
+        {
+            tiledLevelCount++;
+        }
+    }
+
+    UnloadDirectoryFiles(files);
 }
 
 // Letterbox the fixed game canvas into the current window.
@@ -148,19 +185,16 @@ void GameInit(void)
     target = LoadRenderTexture(GAME_SCREEN_WIDTH, GAME_SCREEN_HEIGHT);
     SetTextureFilter(target.texture, TEXTURE_FILTER_BILINEAR);
 
-    // Optional Tiled level — appended to the registry when the .tmx exists.
-    // Candidates cover: running from repo root (make run-mac) and from the binary dir.
+    // Tiled levels are the only level source — every .tmx in resources/ joins the registry.
+    // Candidate dirs cover: running from repo root (make run-mac) and from the binary dir.
+    LoadTiledLevels("resources");
+    if (tiledLevelCount == 0) LoadTiledLevels("../../resources");
+    if (tiledLevelCount == 0)
     {
-        const char *candidates[] = { "resources/tile-map.tmx", "../../resources/tile-map.tmx" };
-        for (int i = 0; i < 2; i++)
-        {
-            if (!FileExists(candidates[i])) continue;
-            if (TiledLevelLoad(&tiledLevel, candidates[i])) break;
-        }
-        if (!tiledLevel.loaded)
-        {
-            TraceLog(LOG_WARNING, "TILED: resources/tile-map.tmx not loaded — running with built-in levels only");
-        }
+        // Without maps there is no game — abort loudly rather than limping along.
+        // (fprintf, not TraceLog: platform.c sets LOG_NONE which would swallow it)
+        fprintf(stderr, "FATAL: no loadable .tmx maps found in resources/ — nothing to play\n");
+        abort();
     }
 
     PhysicsInit(&physics);
@@ -177,14 +211,17 @@ void GameUpdateDrawFrame(void)
     float dt = GetFrameTime();
     animTime += dt;
 
-    // Hot reload: poll the .tmx every half second; rebuild if saved from Tiled
+    // Hot reload: poll the .tmx files every half second; rebuild if saved from Tiled
     tiledWatchTimer += dt;
-    if (tiledLevel.loaded && (tiledWatchTimer >= 0.5f))
+    if ((tiledLevelCount > 0) && (tiledWatchTimer >= 0.5f))
     {
         tiledWatchTimer = 0.0f;
-        if (TiledLevelFileChanged(&tiledLevel) && TiledLevelLoad(&tiledLevel, tiledLevel.tmxPath))
+        for (int i = 0; i < tiledLevelCount; i++)
         {
-            if (IsTiledLevel(levelIndex) && (screen != SCREEN_TITLE))
+            if (!TiledLevelFileChanged(&tiledLevels[i])) continue;
+            if (!TiledLevelLoad(&tiledLevels[i], tiledLevels[i].tmxPath)) continue;
+
+            if ((GetTiledLevel(levelIndex) == &tiledLevels[i]) && (screen != SCREEN_TITLE))
             {
                 LoadCurrentLevel(); // rebuild physics against the edited geometry
             }
@@ -291,6 +328,16 @@ void GameUpdateDrawFrame(void)
             {
                 bool sketchLmbPressed = lmbPressed && !uiClick;
                 bool sketchLmbDown = lmbDown && !uiClick;
+
+                // No-build zones: can't start a stroke inside, and a stroke that
+                // wanders in is cancelled rather than spanning the zone
+                if (TiledLevelNoBuildContains(GetTiledLevel(levelIndex), worldMouse))
+                {
+                    if (sketch.drawing) SketchCancel(&sketch);
+                    sketchLmbPressed = false;
+                    sketchLmbDown = false;
+                }
+
                 SketchUpdate(&sketch, &physics, worldMouse, sketchLmbDown, sketchLmbPressed, rmbPressed);
             }
 
@@ -329,14 +376,7 @@ void GameUpdateDrawFrame(void)
         {
             const LevelDef *level = GetLevelDef(levelIndex);
             bool showStart = (screen == SCREEN_PLAYING) && !PhysicsIsSimulating(&physics);
-            if (IsTiledLevel(levelIndex))
-            {
-                RenderTiledLevel(&tiledLevel); // tile art carries the visuals
-            }
-            else
-            {
-                RenderLevelStatics(level);
-            }
+            RenderTiledLevel(GetTiledLevel(levelIndex)); // tile art + no-build overlay
             RenderPhysics(&physics);
             RenderSketchPreview(&sketch);
             RenderStar(physics.starPos, physics.starRadius, animTime);
@@ -368,7 +408,7 @@ void GameUpdateDrawFrame(void)
 
 void GameUnload(void)
 {
-    TiledLevelUnload(&tiledLevel);
+    for (int i = 0; i < tiledLevelCount; i++) TiledLevelUnload(&tiledLevels[i]);
     PhysicsShutdown(&physics);
     UnloadRenderTexture(target);
 }

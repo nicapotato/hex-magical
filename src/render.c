@@ -47,30 +47,6 @@ static void DrawCrayonPolyline(const Vector2 *points, int count, Color color, fl
     }
 }
 
-static void DrawCrayonBox(float cx, float cy, float halfW, float halfH, float angleDeg, Color color)
-{
-    float rad = angleDeg * DEG2RAD;
-    float c = cosf(rad);
-    float s = sinf(rad);
-
-    Vector2 corners[5];
-    float hx[4] = { -halfW, halfW, halfW, -halfW };
-    float hy[4] = { -halfH, -halfH, halfH, halfH };
-    for (int i = 0; i < 4; i++)
-    {
-        corners[i].x = cx + hx[i] * c - hy[i] * s;
-        corners[i].y = cy + hx[i] * s + hy[i] * c;
-    }
-    corners[4] = corners[0];
-    DrawCrayonPolyline(corners, 5, color, 3.5f);
-
-    // Soft fill
-    Color fill = color;
-    fill.a = 40;
-    DrawTriangle(corners[0], corners[1], corners[2], fill);
-    DrawTriangle(corners[0], corners[2], corners[3], fill);
-}
-
 //----------------------------------------------------------------------------------
 // Module Functions Definition
 //----------------------------------------------------------------------------------
@@ -83,15 +59,6 @@ void RenderPaperBackground(void)
     for (int y = 0; y < GAME_SCREEN_HEIGHT; y += 8)
     {
         DrawLine(0, y, GAME_SCREEN_WIDTH, y, grain);
-    }
-}
-
-void RenderLevelStatics(const LevelDef *level)
-{
-    for (int i = 0; i < level->boxCount; i++)
-    {
-        const StaticBox *box = &level->boxes[i];
-        DrawCrayonBox(box->x, box->y, box->halfWidth, box->halfHeight, box->angleDeg, CRAYON_BROWN);
     }
 }
 
