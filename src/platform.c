@@ -23,6 +23,19 @@ void PlatformInit(void)
 #endif
 }
 
+void PlatformSyncFiles(void)
+{
+#if defined(PLATFORM_WEB)
+    // /solutions is mounted as IDBFS by web_storage.js before main() runs.
+    // syncfs is asynchronous; writes are already visible to this session.
+    EM_ASM({
+        FS.syncfs(false, function(error) {
+            if (error) console.error("SOLUTION: browser persistence sync failed", error);
+        });
+    });
+#endif
+}
+
 void PlatformRunLoop(void (*updateDrawFrame)(void))
 {
 #if defined(PLATFORM_WEB)

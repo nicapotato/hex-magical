@@ -100,7 +100,26 @@ jobs:
           echo "version=${V}" >> "$GITHUB_OUTPUT"
           echo "✅ Version from project.conf: ${V}"
 
+  level-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install raylib build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev libxi-dev \
+            libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev libxinerama-dev \
+            libwayland-dev libxkbcommon-dev
+
+      - name: Build + replay saved level solutions (headless)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: make test
+
   build-and-push-web:
+    needs: level-tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
     if: github.event.inputs.build_platform == 'web' || github.event.inputs.build_platform == 'all' || (github.event.inputs.build_platform == '' && (github.event_name == 'push' || github.event_name == 'pull_request'))
@@ -194,6 +213,7 @@ jobs:
           echo "✅ Successfully pushed to itch.io!"
 
   build-and-push-macos:
+    needs: level-tests
     runs-on: macos-latest
     timeout-minutes: 60
     if: github.event.inputs.build_platform == 'macos' || github.event.inputs.build_platform == 'all' || (github.event.inputs.build_platform == '' && (github.event_name == 'push' || github.event_name == 'pull_request'))
@@ -268,6 +288,7 @@ jobs:
           echo "✅ Successfully pushed to itch.io!"
 
   build-and-push-windows:
+    needs: level-tests
     runs-on: windows-latest
     timeout-minutes: 60
     if: github.event.inputs.build_platform == 'windows' || github.event.inputs.build_platform == 'all' || (github.event.inputs.build_platform == '' && (github.event_name == 'push' || github.event_name == 'pull_request'))
@@ -320,7 +341,10 @@ jobs:
           rm -rf release
           mkdir -p release
           cp "$EXE" release/hex-magical.exe
-          if [ -d src/resources ]; then cp -R src/resources release/resources; fi
+          test -d resources
+          cp -R resources release/resources
+          test -f release/resources/map-2.tmx
+          test -f release/resources/solutions/map-2.solution
           rm -f hex-magical-windows.zip
           7z a hex-magical-windows.zip ./release/*
           ls -la hex-magical-windows.zip

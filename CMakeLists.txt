@@ -61,7 +61,13 @@ target_link_libraries(${PROJECT_NAME} raylib box2d)
 # Web Configurations
 if ("${PLATFORM}" STREQUAL "Web")
     set_target_properties(${PROJECT_NAME} PROPERTIES SUFFIX ".html")
-    target_link_options(${PROJECT_NAME} PUBLIC -sUSE_GLFW=3 PUBLIC --preload-file resources)
+    target_link_options(${PROJECT_NAME} PUBLIC
+        -sUSE_GLFW=3
+        -sFORCE_FILESYSTEM=1
+        -lidbfs.js
+        "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/resources@/resources"
+        "SHELL:--pre-js ${CMAKE_SOURCE_DIR}/src/platform/web_storage.js"
+    )
 endif()
 
 # Checks if OSX and links appropriate frameworks (Only required on MacOS)
@@ -69,4 +75,27 @@ if (APPLE)
     target_link_libraries(${PROJECT_NAME} "-framework IOKit")
     target_link_libraries(${PROJECT_NAME} "-framework Cocoa")
     target_link_libraries(${PROJECT_NAME} "-framework OpenGL")
+endif()
+
+# level-tests: headless solution replay runner (desktop only).
+# Lives in tests/ so the src/ glob doesn't pull its main() into the game target.
+if (NOT "${PLATFORM}" STREQUAL "Web")
+    add_executable(level-tests
+        tests/level_tests.c
+        src/physics.c
+        src/tiled.c
+        src/solution.c
+    )
+    target_include_directories(level-tests PRIVATE src)
+    target_link_libraries(level-tests raylib box2d)
+    set_target_properties(level-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${PROJECT_NAME}
+        C_STANDARD 17
+        C_STANDARD_REQUIRED YES
+    )
+    if (APPLE)
+        target_link_libraries(level-tests "-framework IOKit")
+        target_link_libraries(level-tests "-framework Cocoa")
+        target_link_libraries(level-tests "-framework OpenGL")
+    endif()
 endif()

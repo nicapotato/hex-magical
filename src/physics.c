@@ -79,10 +79,16 @@ static void CreateBall(PhysicsWorld *phys, const LevelDef *level)
     bodyDef.type = b2_dynamicBody;
     bodyDef.position = ToB2(level->ballSpawn);
     bodyDef.linearDamping = 0.0f;    // no air drag — preserve launch speed for long flights
-    bodyDef.angularDamping = 0.2f;
+    // Low spin damping — the ball is the only mover now (Line Rider), so it must
+    // roll freely along drawn track instead of bleeding energy and stalling
+    bodyDef.angularDamping = 0.05f;
     bodyDef.isBullet = true;
+    // Ball sits frozen (disabled) during the build phase; PhysicsStartSimulation enables it.
+    // Everything else in the world is static, so the level is fully fixed until Start.
+    bodyDef.isEnabled = false;
     phys->ballId = b2CreateBody(phys->worldId, &bodyDef);
     phys->ballRadius = level->ballRadius;
+    phys->ballSpawn = level->ballSpawn;
 
     b2ShapeDef shapeDef = b2DefaultShapeDef();
     shapeDef.density = phys->tunables.ballDensity;
@@ -154,8 +160,10 @@ void PhysicsLoadLevel(PhysicsWorld *phys, const LevelDef *level)
     phys->simulating = false;
 
     b2WorldDef worldDef = b2DefaultWorldDef();
-    // Build phase: zero gravity so drawn shapes stay put until Start
-    worldDef.gravity = (b2Vec2){ 0.0f, 0.0f };
+    // Gravity is always on — drawn strokes are static (Line Rider style) and the
+    // ball is disabled until Start, so nothing can move during the build phase.
+    // Screen Y grows downward — gravity points "down" the screen.
+    worldDef.gravity = (b2Vec2){ 0.0f, WORLD_GRAVITY_Y };
     worldDef.maximumLinearSpeed = WORLD_MAX_SPEED;
     phys->worldId = b2CreateWorld(&worldDef);
     phys->valid = true;
@@ -172,24 +180,35 @@ void PhysicsStartSimulation(PhysicsWorld *phys)
     if (!phys->valid || phys->simulating) return;
 
     phys->simulating = true;
-    // Screen Y grows downward — gravity points "down" the screen
-    b2World_SetGravity(phys->worldId, (b2Vec2){ 0.0f, WORLD_GRAVITY_Y });
 
     if (b2Body_IsValid(phys->ballId))
     {
-        b2Body_SetAwake(phys->ballId, true);
+        // Ball was created disabled — Start is the only mutation the world ever sees,
+        // so the post-Start run is a pure function of (level, strokes, tunables).
+        b2Body_Enable(phys->ballId);
         // Initial downward kick on top of gravity (admin tunable)
         if (phys->tunables.dropForce > 0.0f)
         {
             b2Body_SetLinearVelocity(phys->ballId, (b2Vec2){ 0.0f, phys->tunables.dropForce });
         }
     }
+}
 
-    for (int i = 0; i < MAX_DRAWN_BODIES; i++)
+// Stop: back to build phase. Strokes are static so they are untouched — only the
+// ball needs resetting. Player can draw/erase/save/load/tweak, then Start again.
+void PhysicsStopSimulation(PhysicsWorld *phys)
+{
+    if (!phys->valid || !phys->simulating) return;
+
+    phys->simulating = false;
+    phys->accumulator = 0.0f;
+
+    if (b2Body_IsValid(phys->ballId))
     {
-        if (!phys->drawn[i].active) continue;
-        if (!b2Body_IsValid(phys->drawn[i].bodyId)) continue;
-        b2Body_SetAwake(phys->drawn[i].bodyId, true);
+        b2Body_SetLinearVelocity(phys->ballId, (b2Vec2){ 0.0f, 0.0f });
+        b2Body_SetAngularVelocity(phys->ballId, 0.0f);
+        b2Body_SetTransform(phys->ballId, ToB2(phys->ballSpawn), b2MakeRot(0.0f));
+        b2Body_Disable(phys->ballId); // frozen again until the next Start
     }
 }
 
@@ -284,16 +303,13 @@ int PhysicsCreateDrawnBody(PhysicsWorld *phys, const Vector2 *worldPoints, int c
     centroid.y /= (float)pathCount;
 
     b2BodyDef bodyDef = b2DefaultBodyDef();
-    bodyDef.type = b2_dynamicBody;
+    // Line Rider style: strokes are fixed track, suspended in space where drawn
+    bodyDef.type = b2_staticBody;
     bodyDef.position = ToB2(centroid);
     bodyDef.rotation = b2MakeRot(0.0f);
-    bodyDef.linearDamping = 0.1f;
-    bodyDef.angularDamping = 0.35f;
     b2BodyId bodyId = b2CreateBody(phys->worldId, &bodyDef);
 
     b2ShapeDef shapeDef = b2DefaultShapeDef();
-    // Density shared across many capsules — sturdy enough to serve as ramps for the heavy ball
-    shapeDef.density = 0.5f;
     shapeDef.material.friction = 0.55f;
     shapeDef.material.restitution = 0.1f;
 

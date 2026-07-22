@@ -19,12 +19,13 @@
 #define PHYSICS_SUBSTEPS 4
 // Half-width of drawn crayon ink — capsules use this so colliders match the stroke
 #define STROKE_PHYSICS_RADIUS 5.0f
-#define MAX_STROKE_CAPSULES 96
+// Static track is cheap — allow one capsule per smoothed stroke segment
+#define MAX_STROKE_CAPSULES (MAX_STROKE_POINTS - 1)
 
 // Admin-tunable ball physics (defaults restored via PhysicsTunablesDefaults)
-#define TUNE_BALL_DENSITY_DEFAULT     2.5f
+#define TUNE_BALL_DENSITY_DEFAULT     12.0f
 #define TUNE_BALL_DENSITY_MIN         0.25f
-#define TUNE_BALL_DENSITY_MAX         8.0f
+#define TUNE_BALL_DENSITY_MAX         40.0f
 #define TUNE_BALL_RESTITUTION_DEFAULT 0.25f
 #define TUNE_BALL_RESTITUTION_MIN     0.0f
 #define TUNE_BALL_RESTITUTION_MAX     0.95f
@@ -55,6 +56,7 @@ typedef struct PhysicsWorld
 
     b2BodyId ballId;
     float ballRadius;
+    Vector2 ballSpawn; // level spawn — Stop resets the ball here
 
     Vector2 starPos;
     float starRadius;
@@ -68,7 +70,7 @@ typedef struct PhysicsWorld
     PhysicsTunables tunables; // persists across level loads
 
     float accumulator;
-    bool simulating; // false = build phase (ball frozen, no gravity)
+    bool simulating; // false = build phase (ball disabled; strokes are static track)
 } PhysicsWorld;
 
 void PhysicsTunablesDefaults(PhysicsTunables *t);
@@ -78,7 +80,8 @@ void PhysicsApplyBallTunables(PhysicsWorld *phys);
 void PhysicsInit(PhysicsWorld *phys);
 void PhysicsShutdown(PhysicsWorld *phys);
 void PhysicsLoadLevel(PhysicsWorld *phys, const LevelDef *level);
-void PhysicsStartSimulation(PhysicsWorld *phys); // drop the ball / enable gravity
+void PhysicsStartSimulation(PhysicsWorld *phys); // enable + drop the ball
+void PhysicsStopSimulation(PhysicsWorld *phys);  // ball back to spawn, world back to build phase
 void PhysicsStep(PhysicsWorld *phys, float dt);
 bool PhysicsIsSimulating(const PhysicsWorld *phys);
 
@@ -86,7 +89,7 @@ Vector2 PhysicsGetBallPos(const PhysicsWorld *phys);
 float PhysicsGetBallAngle(const PhysicsWorld *phys);
 bool PhysicsCheckWin(const PhysicsWorld *phys);
 
-// Create a dynamic polygon/plank from world-space stroke points. Returns drawn index or -1.
+// Create a static capsule-chain track from world-space stroke points. Returns drawn index or -1.
 int PhysicsCreateDrawnBody(PhysicsWorld *phys, const Vector2 *worldPoints, int count, Color color);
 
 // Destroy drawn body under world-space point. Returns true if something was erased.

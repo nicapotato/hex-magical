@@ -70,6 +70,7 @@ bin/
 external/
 hex-magical/
 hex-magical.zip
+hex-magical-macos.zip
 
 # Android files
 *apk*

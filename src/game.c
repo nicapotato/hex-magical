@@ -7,9 +7,11 @@
 #include "game.h"
 #include "admin.h"
 #include "levels.h"
+#include "platform.h"
 #include "physics.h"
 #include "render.h"
 #include "sketch.h"
+#include "solution.h"
 #include "tiled.h"
 
 #include "raylib.h"
@@ -31,6 +33,8 @@ static SketchState sketch = { 0 };
 static float animTime = 0.0f;
 static bool debugMode = false;
 static bool levelMenuOpen = false;
+static bool winMenuShow = true; // false = admiring the finished run
+static float runTime = 0.0f;    // seconds since Start, frozen at win
 static float viewZoom = 1.0f;
 static Vector2 viewPan = { 0.0f, 0.0f }; // camera target offset from level center
 
@@ -43,6 +47,11 @@ static Vector2 viewPan = { 0.0f, 0.0f }; // camera target offset from level cent
 static TiledLevel tiledLevels[MAX_TILED_LEVELS] = { 0 };
 static int tiledLevelCount = 0;
 static float tiledWatchTimer = 0.0f;
+
+// Which resources dir the shipped levels came from
+static char resourcesDir[256] = "resources";
+// Shared scratch (the struct is ~130 KB — keep it off the stack)
+static Solution solutionScratch = { 0 };
 
 //----------------------------------------------------------------------------------
 // Local helpers
@@ -153,6 +162,90 @@ static void LoadCurrentLevel(void)
     SketchInit(&sketch);
 }
 
+static const char *GetSolutionsDirectory(void)
+{
+#if defined(PLATFORM_WEB)
+    // Mounted to IndexedDB by web_storage.js; unlike /resources, this survives refresh.
+    return "/solutions";
+#else
+    // Keep desktop development fixtures beside levels so F5-created solutions can
+    // be committed and used directly by the headless test runner.
+    static char directory[512];
+    snprintf(directory, sizeof(directory), "%s/solutions", resourcesDir);
+    return directory;
+#endif
+}
+
+// <solution directory>/<level>.solution for the current level
+static const char *GetCurrentSolutionPath(void)
+{
+    static char path[512];
+    const char *base = GetFileNameWithoutExt(GetTiledLevel(levelIndex)->tmxPath);
+    snprintf(path, sizeof(path), "%s/%s.solution", GetSolutionsDirectory(), base);
+    return path;
+}
+
+// F5: snapshot the drawn strokes + tunables so players can come back to them
+// and devs can commit them as level tests (run via `make test`)
+static void SaveCurrentSolution(void)
+{
+    const char *solutionsDir = GetSolutionsDirectory();
+    if (!DirectoryExists(solutionsDir) && (MakeDirectory(solutionsDir) != 0))
+    {
+        fprintf(stderr, "SOLUTION: failed to create directory %s\n", solutionsDir);
+        return;
+    }
+
+    const char *levelFile = GetFileName(GetTiledLevel(levelIndex)->tmxPath);
+    SolutionCapture(&solutionScratch, &physics, levelFile);
+
+    const char *path = GetCurrentSolutionPath();
+    if (SolutionSave(&solutionScratch, path))
+    {
+        fprintf(stderr, "SOLUTION: saved %d strokes to %s\n", solutionScratch.strokeCount, path);
+        PlatformSyncFiles();
+    }
+}
+
+// F9: reset the level and replay the saved strokes — back in build phase, free to edit
+static void RestoreCurrentSolution(void)
+{
+    const char *path = GetCurrentSolutionPath();
+    if (!SolutionLoad(&solutionScratch, path)) return; // SolutionLoad already logged why
+
+    // The file names its level — refuse a stale/renamed solution instead of
+    // silently replaying strokes authored for different geometry
+    const char *levelFile = GetFileName(GetTiledLevel(levelIndex)->tmxPath);
+    if (strcmp(solutionScratch.levelFile, levelFile) != 0)
+    {
+        fprintf(stderr, "SOLUTION: %s is for level '%s' but current level is '%s' — not loading\n",
+                path, solutionScratch.levelFile, levelFile);
+        return;
+    }
+
+    physics.tunables = solutionScratch.tunables; // ball is rebuilt with the recorded knobs
+    LoadCurrentLevel();
+    SolutionApply(&solutionScratch, &physics);
+    fprintf(stderr, "SOLUTION: restored %d strokes from %s\n", solutionScratch.strokeCount, path);
+}
+
+// F8: delete the saved solution for the current level
+static void DeleteCurrentSolution(void)
+{
+    const char *path = GetCurrentSolutionPath();
+    if (!FileExists(path))
+    {
+        fprintf(stderr, "SOLUTION: nothing to delete — %s does not exist\n", path);
+        return;
+    }
+    if (remove(path) == 0)
+    {
+        fprintf(stderr, "SOLUTION: deleted %s\n", path);
+        PlatformSyncFiles();
+    }
+    else fprintf(stderr, "SOLUTION: failed to delete %s\n", path);
+}
+
 static void StartPlaying(void)
 {
     screen = SCREEN_PLAYING;
@@ -172,19 +265,38 @@ static void AdvanceLevel(void)
     StartPlaying();
 }
 
-static bool WantsDropBall(bool lmbPressed, Vector2 uiMouse)
+static void QuitToTitle(void)
+{
+    screen = SCREEN_TITLE;
+    levelMenuOpen = false;
+    PhysicsShutdown(&physics);
+}
+
+// Live strokes on the canvas (drawnCount is a high-water mark, slots can be erased)
+static int CountActiveStrokes(void)
+{
+    int count = 0;
+    for (int i = 0; i < MAX_DRAWN_BODIES; i++)
+    {
+        if (physics.drawn[i].active) count++;
+    }
+    return count;
+}
+
+// Enter or the START/STOP button toggles simulation either way
+static bool WantsToggleSimulation(bool lmbPressed, Vector2 uiMouse)
 {
     if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)) return true;
     if (lmbPressed && CheckCollisionPointRec(uiMouse, RenderGetStartButtonRect())) return true;
     return false;
 }
 
-static bool IsUiClick(Vector2 uiMouse, bool building)
+static bool IsUiClick(Vector2 uiMouse)
 {
     if (CheckCollisionPointRec(uiMouse, RenderGetDebugButtonRect())) return true;
     if (CheckCollisionPointRec(uiMouse, AdminGetButtonRect())) return true;
     if (CheckCollisionPointRec(uiMouse, RenderGetLevelMenuHeaderRect())) return true;
-    if (building && CheckCollisionPointRec(uiMouse, RenderGetStartButtonRect())) return true;
+    if (CheckCollisionPointRec(uiMouse, RenderGetStartButtonRect())) return true;
     return false;
 }
 
@@ -219,9 +331,23 @@ void GameInit(void)
     viewPan = (Vector2){ 0.0f, 0.0f };
 
     // Tiled levels are the only level source — every .tmx in resources/ joins the registry.
-    // Candidate dirs cover: running from repo root (make run-mac) and from the binary dir.
+    // Candidate dirs cover repo-root development, the old binary-relative layout,
+    // and packaged macOS/Windows apps regardless of their process working directory.
     LoadTiledLevels("resources");
-    if (tiledLevelCount == 0) LoadTiledLevels("../../resources");
+    if (tiledLevelCount == 0)
+    {
+        LoadTiledLevels("../../resources");
+        if (tiledLevelCount > 0) snprintf(resourcesDir, sizeof(resourcesDir), "../../resources");
+    }
+#if !defined(PLATFORM_WEB)
+    if (tiledLevelCount == 0)
+    {
+        char appResources[512];
+        snprintf(appResources, sizeof(appResources), "%sresources", GetApplicationDirectory());
+        LoadTiledLevels(appResources);
+        if (tiledLevelCount > 0) snprintf(resourcesDir, sizeof(resourcesDir), "%s", appResources);
+    }
+#endif
     if (tiledLevelCount == 0)
     {
         // Without maps there is no game — abort loudly rather than limping along.
@@ -229,6 +355,9 @@ void GameInit(void)
         fprintf(stderr, "FATAL: no loadable .tmx maps found in resources/ — nothing to play\n");
         abort();
     }
+
+    // ESC is used by the win menu (admire toggle) — don't let raylib treat it as quit
+    SetExitKey(KEY_NULL);
 
     PhysicsInit(&physics);
     SketchInit(&sketch);
@@ -377,27 +506,39 @@ void GameUpdateDrawFrame(void)
 
     if (screen == SCREEN_PLAYING)
     {
-        int selected = GetLevelSelectKey();
+        // Number row is solutions during play (1 save / 2 load / 3 delete) —
+        // laptop-friendly, no F-keys. Level select stays on the menu, [ ], and
+        // the title screen's number keys.
         int stepped = GetLevelStepKey();
         if (IsKeyPressed(KEY_R))
         {
             LoadCurrentLevel();
         }
-        else if (selected >= 0) { levelIndex = selected; LoadCurrentLevel(); }
         else if (stepped >= 0) { levelIndex = stepped; LoadCurrentLevel(); }
+        else if (IsKeyPressed(KEY_ONE)) { SaveCurrentSolution(); }
+        else if (IsKeyPressed(KEY_TWO)) { RestoreCurrentSolution(); }
+        else if (IsKeyPressed(KEY_THREE)) { DeleteCurrentSolution(); }
         else
         {
             bool building = !PhysicsIsSimulating(&physics);
-            bool uiClick = IsUiClick(uiMouse, building);
+            bool uiClick = IsUiClick(uiMouse);
 
-            // Build phase: draw freely; Enter / START drops the ball
-            if (building && WantsDropBall(lmbPressed, uiMouse))
+            // Enter / START drops the ball; while running the same input STOPs:
+            // ball back to spawn, strokes intact, free to draw/erase/save/load again
+            if (WantsToggleSimulation(lmbPressed, uiMouse))
             {
                 SketchCancel(&sketch);
-                PhysicsStartSimulation(&physics);
+                if (building)
+                {
+                    runTime = 0.0f;
+                    PhysicsStartSimulation(&physics);
+                }
+                else PhysicsStopSimulation(&physics);
             }
-            else
+            else if (building)
             {
+                // Drawing/erasing is build-phase only: the world is immutable after
+                // Start, so every run is a pure replay of the built track
                 bool sketchLmbPressed = lmbPressed && !uiClick;
                 bool sketchLmbDown = lmbDown && !uiClick;
 
@@ -414,23 +555,42 @@ void GameUpdateDrawFrame(void)
             }
 
             PhysicsStep(&physics, dt);
+            if (PhysicsIsSimulating(&physics)) runTime += dt;
 
             if (PhysicsIsSimulating(&physics) && PhysicsCheckWin(&physics))
             {
                 screen = SCREEN_WIN;
+                winMenuShow = true;
             }
         }
     }
     else if (screen == SCREEN_WIN)
     {
-        if (IsKeyPressed(KEY_R))
+        // The world keeps simulating — the ball rolls on while you admire the run
+        PhysicsStep(&physics, dt);
+
+        bool hasNext = (levelIndex + 1) < GameGetLevelCount();
+        int buttonCount = hasNext ? 4 : 3;
+
+        if (!winMenuShow)
         {
-            StartPlaying();
+            if (IsKeyPressed(KEY_H) || IsKeyPressed(KEY_ESCAPE)) winMenuShow = true;
         }
-        else if (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ENTER) ||
-                 (lmbPressed && !CheckCollisionPointRec(uiMouse, RenderGetDebugButtonRect())))
+        else if (IsKeyPressed(KEY_R)) { StartPlaying(); }
+        else if (IsKeyPressed(KEY_N) && hasNext) { AdvanceLevel(); }
+        else if (IsKeyPressed(KEY_Q)) { QuitToTitle(); }
+        else if (IsKeyPressed(KEY_H) || IsKeyPressed(KEY_ESCAPE)) { winMenuShow = false; }
+        else if (lmbPressed)
         {
-            AdvanceLevel();
+            for (int i = 0; i < buttonCount; i++)
+            {
+                if (!CheckCollisionPointRec(uiMouse, RenderGetWinMenuButtonRect(i, buttonCount))) continue;
+                if (i == 0) winMenuShow = false;                  // Admire creation
+                else if (i == 1) StartPlaying();                  // Restart level
+                else if ((i == 2) && hasNext) AdvanceLevel();     // Next level
+                else QuitToTitle();                               // Quit to title
+                break;
+            }
         }
     }
     //----------------------------------------------------------------------------------
@@ -442,12 +602,12 @@ void GameUpdateDrawFrame(void)
 
         if (screen == SCREEN_TITLE)
         {
-            RenderHud(NULL, 0, false, true, false, false, false, uiMouse);
+            RenderHud(NULL, 0, true, false, false, false, false, uiMouse);
         }
         else
         {
             const LevelDef *level = GetLevelDef(levelIndex);
-            bool showStart = (screen == SCREEN_PLAYING) && !PhysicsIsSimulating(&physics);
+            bool showPlayButton = (screen == SCREEN_PLAYING);
 
             BeginMode2D(camera); // world space: pans/zooms, HUD below does not
                 RenderTiledLevel(GetTiledLevel(levelIndex)); // tile art + no-build overlay
@@ -465,9 +625,16 @@ void GameUpdateDrawFrame(void)
                 DrawRectangleLinesEx((Rectangle){ 0, 0, GAME_SCREEN_WIDTH, GAME_SCREEN_HEIGHT }, 4, (Color){ 90, 60, 40, 180 });
             EndMode2D();
 
-            RenderHud(level->name, levelIndex, screen == SCREEN_WIN, false, showStart, debugMode,
-                      levelMenuOpen, uiMouse);
+            RenderHud(level->name, levelIndex, false, showPlayButton,
+                      PhysicsIsSimulating(&physics), debugMode, levelMenuOpen, uiMouse);
             AdminDraw(&physics, uiMouse);
+
+            if (screen == SCREEN_WIN)
+            {
+                bool hasNext = (levelIndex + 1) < GameGetLevelCount();
+                if (winMenuShow) RenderWinMenu(CountActiveStrokes(), runTime, hasNext, uiMouse);
+                else RenderWinAdmireHint();
+            }
         }
     EndTextureMode();
 

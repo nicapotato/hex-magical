@@ -22,6 +22,10 @@
 // Apply platform-specific startup configuration (e.g. trace log verbosity)
 void PlatformInit(void);
 
+// Flush browser-backed persistent files after a save/delete. This is a no-op
+// on desktop, where stdio writes are already durable.
+void PlatformSyncFiles(void);
+
 // Run the main game loop using whichever mechanism the target platform requires:
 // Emscripten's asynchronous browser loop on Web, a blocking while loop everywhere else
 void PlatformRunLoop(void (*updateDrawFrame)(void));

@@ -1,5 +1,5 @@
 .PHONY: clean build build-wasm run-mac run-wasm package-wasm app-bundle package-macos package-windows \
-	help ci ci-watch release release-watch
+	help ci ci-watch release release-watch test
 
 BUILD_DIR := build
 PROJECT := hex-magical
@@ -90,6 +90,14 @@ run-mac: build
 	if [ -z "$$EXE" ]; then echo "Error: binary not found"; exit 1; fi; \
 	./"$$EXE"
 
+# Headless level solution tests: replay resources/solutions/*.solution and
+# assert each still solves its level. Fast (pure Box2D stepping, no window).
+test: build
+	@T="$(BUILD_DIR)/$(PROJECT)/level-tests"; \
+	if [ ! -x "$$T" ]; then T="$(BUILD_DIR)/$(PROJECT)/Release/level-tests"; fi; \
+	if [ ! -x "$$T" ]; then echo "Error: level-tests binary not found after build"; exit 1; fi; \
+	./"$$T"
+
 run-wasm: build-wasm
 	@echo "Serving at http://localhost:8000/"
 	cd $(ITCH_DIR) && python3 -m http.server 8000
@@ -97,6 +105,7 @@ run-wasm: build-wasm
 help:
 	@echo "hex-magical targets:"
 	@echo "  build / run-mac / build-wasm / run-wasm"
+	@echo "  test          - Replay saved solutions headlessly (level tests)"
 	@echo "  package-wasm / package-macos / package-windows / app-bundle"
 	@echo "  ci            - Dispatch CI (PLATFORM, VERSION, CHANNEL, REF)"
 	@echo "  ci-watch      - Dispatch CI and watch the run"
