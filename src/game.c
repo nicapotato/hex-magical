@@ -31,6 +31,13 @@ static SketchState sketch = { 0 };
 static float animTime = 0.0f;
 static bool debugMode = false;
 static bool levelMenuOpen = false;
+static float viewZoom = 1.0f;
+static Vector2 viewPan = { 0.0f, 0.0f }; // camera target offset from level center
+
+#define VIEW_ZOOM_MIN 0.5f
+#define VIEW_ZOOM_MAX 2.5f
+#define VIEW_ZOOM_RATE 1.5f // exponential zoom speed per second while +/- held
+#define VIEW_PAN_SPEED 480.0f // world pixels per second at 1x zoom
 
 #define MAX_TILED_LEVELS 8
 static TiledLevel tiledLevels[MAX_TILED_LEVELS] = { 0 };
@@ -93,26 +100,50 @@ static void LoadTiledLevels(const char *dir)
     UnloadDirectoryFiles(files);
 }
 
-// Letterbox the fixed game canvas into the current window.
-static Rectangle GetGameDestRect(void)
+// The view keeps the game's vertical size (720) and widens to match the window
+// aspect — no stretching, wide windows simply see more world horizontally.
+static int GetDesiredViewWidth(void)
 {
     float sw = (float)GetScreenWidth();
     float sh = (float)GetScreenHeight();
-    float scale = fminf(sw / (float)GAME_SCREEN_WIDTH, sh / (float)GAME_SCREEN_HEIGHT);
-    float dw = (float)GAME_SCREEN_WIDTH * scale;
-    float dh = (float)GAME_SCREEN_HEIGHT * scale;
-    return (Rectangle){ (sw - dw) * 0.5f, (sh - dh) * 0.5f, dw, dh };
+    if (sh <= 0.0f) return GAME_SCREEN_WIDTH;
+
+    int w = (int)roundf((float)GAME_SCREEN_HEIGHT * sw / sh);
+    if (w < 320) w = 320;
+    if (w > 4096) w = 4096;
+    return w;
 }
 
-static Vector2 GetWorldMouse(void)
+int GameGetViewWidth(void)
+{
+    return target.texture.width;
+}
+
+// World rendering goes through this camera: level center + WASD pan, +/- zoom.
+static Camera2D GetWorldCamera(void)
+{
+    return (Camera2D){
+        .offset = { (float)target.texture.width * 0.5f, (float)GAME_SCREEN_HEIGHT * 0.5f },
+        .target = {
+            (float)GAME_SCREEN_WIDTH * 0.5f + viewPan.x,
+            (float)GAME_SCREEN_HEIGHT * 0.5f + viewPan.y
+        },
+        .rotation = 0.0f,
+        .zoom = viewZoom
+    };
+}
+
+// Mouse in view (HUD) coordinates — the render texture fills the whole window
+static Vector2 GetViewMouse(void)
 {
     Vector2 mouse = GetMousePosition();
-    Rectangle dest = GetGameDestRect();
-    if (dest.width <= 0.0f || dest.height <= 0.0f) return mouse;
+    float sw = (float)GetScreenWidth();
+    float sh = (float)GetScreenHeight();
+    if ((sw <= 0.0f) || (sh <= 0.0f)) return mouse;
 
     return (Vector2){
-        (mouse.x - dest.x) * ((float)GAME_SCREEN_WIDTH / dest.width),
-        (mouse.y - dest.y) * ((float)GAME_SCREEN_HEIGHT / dest.height)
+        mouse.x * ((float)target.texture.width / sw),
+        mouse.y * ((float)GAME_SCREEN_HEIGHT / sh)
     };
 }
 
@@ -141,19 +172,19 @@ static void AdvanceLevel(void)
     StartPlaying();
 }
 
-static bool WantsDropBall(bool lmbPressed, Vector2 worldMouse)
+static bool WantsDropBall(bool lmbPressed, Vector2 uiMouse)
 {
     if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)) return true;
-    if (lmbPressed && CheckCollisionPointRec(worldMouse, RenderGetStartButtonRect())) return true;
+    if (lmbPressed && CheckCollisionPointRec(uiMouse, RenderGetStartButtonRect())) return true;
     return false;
 }
 
-static bool IsUiClick(Vector2 worldMouse, bool building)
+static bool IsUiClick(Vector2 uiMouse, bool building)
 {
-    if (CheckCollisionPointRec(worldMouse, RenderGetDebugButtonRect())) return true;
-    if (CheckCollisionPointRec(worldMouse, AdminGetButtonRect())) return true;
-    if (CheckCollisionPointRec(worldMouse, RenderGetLevelMenuHeaderRect())) return true;
-    if (building && CheckCollisionPointRec(worldMouse, RenderGetStartButtonRect())) return true;
+    if (CheckCollisionPointRec(uiMouse, RenderGetDebugButtonRect())) return true;
+    if (CheckCollisionPointRec(uiMouse, AdminGetButtonRect())) return true;
+    if (CheckCollisionPointRec(uiMouse, RenderGetLevelMenuHeaderRect())) return true;
+    if (building && CheckCollisionPointRec(uiMouse, RenderGetStartButtonRect())) return true;
     return false;
 }
 
@@ -182,8 +213,10 @@ static int GetLevelStepKey(void)
 //----------------------------------------------------------------------------------
 void GameInit(void)
 {
-    target = LoadRenderTexture(GAME_SCREEN_WIDTH, GAME_SCREEN_HEIGHT);
+    target = LoadRenderTexture(GetDesiredViewWidth(), GAME_SCREEN_HEIGHT);
     SetTextureFilter(target.texture, TEXTURE_FILTER_BILINEAR);
+    viewZoom = 1.0f;
+    viewPan = (Vector2){ 0.0f, 0.0f };
 
     // Tiled levels are the only level source — every .tmx in resources/ joins the registry.
     // Candidate dirs cover: running from repo root (make run-mac) and from the binary dir.
@@ -236,7 +269,45 @@ void GameUpdateDrawFrame(void)
     }
 #endif
 
-    Vector2 worldMouse = GetWorldMouse();
+    // Follow window aspect: recreate the view texture when its width changes
+    int desiredViewWidth = GetDesiredViewWidth();
+    if (desiredViewWidth != target.texture.width)
+    {
+        UnloadRenderTexture(target);
+        target = LoadRenderTexture(desiredViewWidth, GAME_SCREEN_HEIGHT);
+        SetTextureFilter(target.texture, TEXTURE_FILTER_BILINEAR);
+    }
+
+    // Hold + / - (or keypad) to zoom the world view in and out
+    float zoomDir = 0.0f;
+    if (IsKeyDown(KEY_EQUAL) || IsKeyDown(KEY_KP_ADD)) zoomDir += 1.0f;
+    if (IsKeyDown(KEY_MINUS) || IsKeyDown(KEY_KP_SUBTRACT)) zoomDir -= 1.0f;
+    if (zoomDir != 0.0f)
+    {
+        viewZoom *= expf(zoomDir * VIEW_ZOOM_RATE * dt);
+        if (viewZoom < VIEW_ZOOM_MIN) viewZoom = VIEW_ZOOM_MIN;
+        if (viewZoom > VIEW_ZOOM_MAX) viewZoom = VIEW_ZOOM_MAX;
+    }
+
+    // WASD pans the camera; speed is in screen-space so zoomed-in moves feel the same
+    {
+        Vector2 panDir = { 0.0f, 0.0f };
+        if (IsKeyDown(KEY_A)) panDir.x -= 1.0f;
+        if (IsKeyDown(KEY_D)) panDir.x += 1.0f;
+        if (IsKeyDown(KEY_W)) panDir.y -= 1.0f;
+        if (IsKeyDown(KEY_S)) panDir.y += 1.0f;
+        if ((panDir.x != 0.0f) || (panDir.y != 0.0f))
+        {
+            float len = sqrtf(panDir.x * panDir.x + panDir.y * panDir.y);
+            float speed = (VIEW_PAN_SPEED / viewZoom) * dt / len;
+            viewPan.x += panDir.x * speed;
+            viewPan.y += panDir.y * speed;
+        }
+    }
+
+    Camera2D camera = GetWorldCamera();
+    Vector2 uiMouse = GetViewMouse();                          // HUD hit tests
+    Vector2 worldMouse = GetScreenToWorld2D(uiMouse, camera);  // sketching / no-build
     bool lmbDown = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
     bool lmbPressed = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
     bool rmbPressed = IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
@@ -255,7 +326,7 @@ void GameUpdateDrawFrame(void)
     else if ((screen == SCREEN_PLAYING) || (screen == SCREEN_WIN))
     {
         // Admin UI gets first claim on the mouse
-        AdminAction adminAction = AdminHandleInput(&physics, worldMouse, lmbDown, lmbPressed);
+        AdminAction adminAction = AdminHandleInput(&physics, uiMouse, lmbDown, lmbPressed);
         if (adminAction == ADMIN_ACTION_RESPAWN)
         {
             screen = SCREEN_PLAYING;
@@ -270,7 +341,7 @@ void GameUpdateDrawFrame(void)
         // Levels dropdown
         if (lmbPressed)
         {
-            if (CheckCollisionPointRec(worldMouse, RenderGetLevelMenuHeaderRect()))
+            if (CheckCollisionPointRec(uiMouse, RenderGetLevelMenuHeaderRect()))
             {
                 levelMenuOpen = !levelMenuOpen;
                 lmbPressed = false;
@@ -280,7 +351,7 @@ void GameUpdateDrawFrame(void)
             {
                 for (int i = 0; i < GameGetLevelCount(); i++)
                 {
-                    if (CheckCollisionPointRec(worldMouse, RenderGetLevelMenuItemRect(i)))
+                    if (CheckCollisionPointRec(uiMouse, RenderGetLevelMenuItemRect(i)))
                     {
                         levelIndex = i;
                         StartPlaying();
@@ -295,8 +366,9 @@ void GameUpdateDrawFrame(void)
         }
 
         // DEBUG toggle available during play/win
-        if (IsKeyPressed(KEY_D) ||
-            (lmbPressed && CheckCollisionPointRec(worldMouse, RenderGetDebugButtonRect())))
+        // F3 (not D — D is camera pan) or the DEBUG button
+        if (IsKeyPressed(KEY_F3) ||
+            (lmbPressed && CheckCollisionPointRec(uiMouse, RenderGetDebugButtonRect())))
         {
             debugMode = !debugMode;
             lmbPressed = false; // consume click so it doesn't draw / advance
@@ -316,10 +388,10 @@ void GameUpdateDrawFrame(void)
         else
         {
             bool building = !PhysicsIsSimulating(&physics);
-            bool uiClick = IsUiClick(worldMouse, building);
+            bool uiClick = IsUiClick(uiMouse, building);
 
             // Build phase: draw freely; Enter / START drops the ball
-            if (building && WantsDropBall(lmbPressed, worldMouse))
+            if (building && WantsDropBall(lmbPressed, uiMouse))
             {
                 SketchCancel(&sketch);
                 PhysicsStartSimulation(&physics);
@@ -356,7 +428,7 @@ void GameUpdateDrawFrame(void)
             StartPlaying();
         }
         else if (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ENTER) ||
-                 (lmbPressed && !CheckCollisionPointRec(worldMouse, RenderGetDebugButtonRect())))
+                 (lmbPressed && !CheckCollisionPointRec(uiMouse, RenderGetDebugButtonRect())))
         {
             AdvanceLevel();
         }
@@ -370,37 +442,42 @@ void GameUpdateDrawFrame(void)
 
         if (screen == SCREEN_TITLE)
         {
-            RenderHud(NULL, 0, false, true, false, false, false, worldMouse);
+            RenderHud(NULL, 0, false, true, false, false, false, uiMouse);
         }
         else
         {
             const LevelDef *level = GetLevelDef(levelIndex);
             bool showStart = (screen == SCREEN_PLAYING) && !PhysicsIsSimulating(&physics);
-            RenderTiledLevel(GetTiledLevel(levelIndex)); // tile art + no-build overlay
-            RenderPhysics(&physics);
-            RenderSketchPreview(&sketch);
-            RenderStar(physics.starPos, physics.starRadius, animTime);
-            RenderBall(PhysicsGetBallPos(&physics), physics.ballRadius, PhysicsGetBallAngle(&physics));
 
-            if (debugMode)
-            {
-                RenderPhysicsDebug(&physics, level);
-            }
+            BeginMode2D(camera); // world space: pans/zooms, HUD below does not
+                RenderTiledLevel(GetTiledLevel(levelIndex)); // tile art + no-build overlay
+                RenderPhysics(&physics);
+                RenderSketchPreview(&sketch);
+                RenderStar(physics.starPos, physics.starRadius, animTime);
+                RenderBall(PhysicsGetBallPos(&physics), physics.ballRadius, PhysicsGetBallAngle(&physics));
+
+                if (debugMode)
+                {
+                    RenderPhysicsDebug(&physics, level);
+                }
+
+                // Playable canvas boundary (the Tiled walls live on these edges)
+                DrawRectangleLinesEx((Rectangle){ 0, 0, GAME_SCREEN_WIDTH, GAME_SCREEN_HEIGHT }, 4, (Color){ 90, 60, 40, 180 });
+            EndMode2D();
 
             RenderHud(level->name, levelIndex, screen == SCREEN_WIN, false, showStart, debugMode,
-                      levelMenuOpen, worldMouse);
-            AdminDraw(&physics, worldMouse);
+                      levelMenuOpen, uiMouse);
+            AdminDraw(&physics, uiMouse);
         }
-
-        DrawRectangleLinesEx((Rectangle){ 0, 0, GAME_SCREEN_WIDTH, GAME_SCREEN_HEIGHT }, 4, (Color){ 90, 60, 40, 180 });
     EndTextureMode();
 
+    // The view texture matches the window aspect, so it fills the window exactly
     BeginDrawing();
         ClearBackground((Color){ 40, 35, 30, 255 });
 
         DrawTexturePro(target.texture,
             (Rectangle){ 0, 0, (float)target.texture.width, -(float)target.texture.height },
-            GetGameDestRect(),
+            (Rectangle){ 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() },
             (Vector2){ 0, 0 }, 0.0f, WHITE);
     EndDrawing();
     //----------------------------------------------------------------------------------

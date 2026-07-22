@@ -72,7 +72,7 @@ static Rectangle PanelRect(void)
             + (float)ADMIN_SLIDER_COUNT * ADMIN_ROW_H
             + ADMIN_GAP + ADMIN_ACTION_BTN_H + ADMIN_PAD;
     return (Rectangle){
-        (float)GAME_SCREEN_WIDTH - ADMIN_PANEL_W - 8.0f,
+        (float)GameGetViewWidth() - ADMIN_PANEL_W - 8.0f,
         btn.y + btn.height + 8.0f,
         ADMIN_PANEL_W,
         h
@@ -118,7 +118,7 @@ Rectangle AdminGetButtonRect(void)
 {
     // Sits left of DEBUG (80 wide at the top-right edge)
     return (Rectangle){
-        (float)GAME_SCREEN_WIDTH - 80.0f - 8.0f - ADMIN_BTN_W - 8.0f,
+        (float)GameGetViewWidth() - 80.0f - 8.0f - ADMIN_BTN_W - 8.0f,
         12.0f,
         ADMIN_BTN_W,
         ADMIN_BTN_H

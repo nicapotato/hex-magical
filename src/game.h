@@ -33,4 +33,8 @@ void GameUnload(void);            // Unload resources / free game state
 int GameGetLevelCount(void);
 const char *GameGetLevelName(int index);
 
+// Current view width in game pixels — follows the window aspect so wide/fullscreen
+// windows see more world horizontally. View height is always GAME_SCREEN_HEIGHT.
+int GameGetViewWidth(void);
+
 #endif // GAME_H

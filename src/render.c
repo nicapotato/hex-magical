@@ -54,11 +54,11 @@ void RenderPaperBackground(void)
 {
     ClearBackground(PAPER);
 
-    // Subtle paper grain lines
+    // Subtle paper grain lines across the full (aspect-dependent) view width
     Color grain = { 220, 210, 185, 40 };
     for (int y = 0; y < GAME_SCREEN_HEIGHT; y += 8)
     {
-        DrawLine(0, y, GAME_SCREEN_WIDTH, y, grain);
+        DrawLine(0, y, GameGetViewWidth(), y, grain);
     }
 }
 
@@ -250,7 +250,7 @@ void RenderBall(Vector2 pos, float radius, float angle)
 
 Rectangle RenderGetDebugButtonRect(void)
 {
-    return (Rectangle){ (float)GAME_SCREEN_WIDTH - 80.0f - 8.0f, 12.0f, 80.0f, 40.0f };
+    return (Rectangle){ (float)GameGetViewWidth() - 80.0f - 8.0f, 12.0f, 80.0f, 40.0f };
 }
 
 Rectangle RenderGetStartButtonRect(void)
@@ -314,7 +314,13 @@ static void DrawFpsIndicator(void)
 {
     const char *fps = TextFormat("%d FPS", GetFPS());
     int fw = MeasureText(fps, 16);
-    DrawText(fps, GAME_SCREEN_WIDTH - fw - 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
+    DrawText(fps, GameGetViewWidth() - fw - 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
+}
+
+// Horizontally centered text in the current view
+static void DrawTextCentered(const char *text, int y, int fontSize, Color color)
+{
+    DrawText(text, (GameGetViewWidth() - MeasureText(text, fontSize)) / 2, y, fontSize, color);
 }
 
 static void DrawUiButton(Rectangle btn, const char *label, bool active, bool hover)
@@ -352,11 +358,11 @@ void RenderHud(const char *levelName, int levelIndex, bool showWin, bool showTit
 {
     if (showTitle)
     {
-        DrawText("HEX MAGICAL", 160, 200, 48, INK_BROWN);
-        DrawText("a crayon physics clone", 200, 260, 22, CRAYON_BROWN);
-        DrawText("Draw under the ball, then drop it to the star", 120, 340, 18, INK_BROWN);
-        DrawText("LMB draw   RMB erase   ENTER drop   R restart", 140, 380, 18, CRAYON_BROWN);
-        DrawText("Press SPACE or click to play", 200, 480, 22, BALL_RED);
+        DrawTextCentered("HEX MAGICAL", 200, 48, INK_BROWN);
+        DrawTextCentered("a crayon physics clone", 260, 22, CRAYON_BROWN);
+        DrawTextCentered("Draw under the ball, then drop it to the star", 340, 18, INK_BROWN);
+        DrawTextCentered("LMB draw   RMB erase   ENTER drop   R restart   WASD pan   +/- zoom", 380, 18, CRAYON_BROWN);
+        DrawTextCentered("Press SPACE or click to play", 480, 22, BALL_RED);
         DrawFpsIndicator();
         return;
     }
@@ -372,7 +378,7 @@ void RenderHud(const char *levelName, int levelIndex, bool showWin, bool showTit
     }
     else
     {
-        DrawText("LMB draw  RMB erase  R restart  D debug  [ ] level", 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
+        DrawText("LMB draw  RMB erase  R restart  F3 debug  [ ] level  WASD pan  +/- zoom", 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
     }
 
     if (debugMode)
@@ -383,9 +389,9 @@ void RenderHud(const char *levelName, int levelIndex, bool showWin, bool showTit
 
     if (showWin)
     {
-        DrawRectangle(0, 280, GAME_SCREEN_WIDTH, 120, (Color){ 245, 236, 214, 200 });
-        DrawText("You did it!", 240, 300, 40, BALL_RED);
-        DrawText("Click or SPACE for next level", 180, 360, 20, INK_BROWN);
+        DrawRectangle(0, 280, GameGetViewWidth(), 120, (Color){ 245, 236, 214, 200 });
+        DrawTextCentered("You did it!", 300, 40, BALL_RED);
+        DrawTextCentered("Click or SPACE for next level", 360, 20, INK_BROWN);
     }
 
     DrawFpsIndicator();
