@@ -16,7 +16,9 @@ int main(void)
     // Borderless fullscreen by default; user can still resize after leaving that mode.
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_BORDERLESS_WINDOWED_MODE | FLAG_VSYNC_HINT);
 #else
-    SetConfigFlags(FLAG_VSYNC_HINT);
+    // RESIZABLE lets raylib sync GetScreenWidth/Height to the browser/itch iframe
+    // viewport so the aspect-following view fills the whole embed (see shell.html).
+    SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE);
 #endif
 
     InitWindow(GAME_SCREEN_WIDTH, GAME_SCREEN_HEIGHT, "hex-magical — crayon physics");
