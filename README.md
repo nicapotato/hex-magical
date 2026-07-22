@@ -1,16 +1,16 @@
 # hex-magical
 
-[![Release](https://img.shields.io/badge/release-v0.0.3-blue)](https://github.com/nicapotato/hex-magical/releases/tag/v0.0.3)
+[![Release](https://img.shields.io/badge/release-v0.0.5-blue)](https://github.com/nicapotato/hex-magical/releases/tag/v0.0.5)
 
-## hex-magical v0.0.3
+## hex-magical v0.0.5
 
 Build status and downloads for the pinned version in [`project.conf`](project.conf). Update this section when bumping `VERSION`.
 
 | Platform | Build | Download |
 |----------|-------|----------|
-| Web (WASM) | ![Web WASM](https://img.shields.io/badge/web%20wasm-passing-brightgreen) | [hex-magical_wasm.zip](https://github.com/nicapotato/hex-magical/releases/download/v0.0.3/hex-magical_wasm.zip) |
-| macOS | ![macOS](https://img.shields.io/badge/macos-passing-brightgreen) | [hex-magical-macos.zip](https://github.com/nicapotato/hex-magical/releases/download/v0.0.3/hex-magical-macos.zip) |
-| Windows x64 | ![Windows x64](https://img.shields.io/badge/windows%20x64-passing-brightgreen) | [hex-magical-windows.zip](https://github.com/nicapotato/hex-magical/releases/download/v0.0.3/hex-magical-windows.zip) |
+| Web (WASM) | ![Web WASM](https://img.shields.io/badge/web%20wasm-passing-brightgreen) | [hex-magical_wasm.zip](https://github.com/nicapotato/hex-magical/releases/download/v0.0.5/hex-magical_wasm.zip) |
+| macOS | ![macOS](https://img.shields.io/badge/macos-passing-brightgreen) | [hex-magical-macos.zip](https://github.com/nicapotato/hex-magical/releases/download/v0.0.5/hex-magical-macos.zip) |
+| Windows x64 | ![Windows x64](https://img.shields.io/badge/windows%20x64-passing-brightgreen) | [hex-magical-windows.zip](https://github.com/nicapotato/hex-magical/releases/download/v0.0.5/hex-magical-windows.zip) |
 
 A Crayon Physics Deluxe–style drawing puzzle in C + raylib 6.0 + Box2D 3.1.
 
