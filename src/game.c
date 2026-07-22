@@ -792,9 +792,6 @@ void GameUpdateDrawFrame(void)
                 {
                     RenderPhysicsDebug(&physics, level);
                 }
-
-                // Playable canvas boundary (the Tiled walls live on these edges)
-                DrawRectangleLinesEx((Rectangle){ 0, 0, GAME_SCREEN_WIDTH, GAME_SCREEN_HEIGHT }, 4, (Color){ 90, 60, 40, 180 });
             EndMode2D();
 
             RenderHud(level->name, levelIndex, false, showPlayButton,

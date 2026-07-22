@@ -1,7 +1,10 @@
 {
-    "activeFile": "",
+    "activeFile": "map-5.tmx",
     "expandedProjectPaths": [
+        "rules",
+        "."
     ],
+    "file.lastUsedOpenFilter": "All Files (*)",
     "fileStates": {
         ":/automap-tiles.tsx": {
             "scaleInDock": 1
@@ -38,8 +41,8 @@
             "scale": 0.25,
             "selectedLayer": 1,
             "viewCenter": {
-                "x": 1592,
-                "y": 1436
+                "x": 1600,
+                "y": 616
             }
         },
         "map-5.tmx": {
@@ -90,14 +93,16 @@
     "map.tileHeight": 16,
     "map.tileWidth": 16,
     "openFiles": [
+        "map-4.tmx",
+        "map-5.tmx"
     ],
     "project": "hex-magical-test.tiled-project",
     "property.type": "float",
     "recentFiles": [
-        "map-3.tmx",
-        "map-2.tmx",
         "map-4.tmx",
         "map-5.tmx",
+        "map-3.tmx",
+        "map-2.tmx",
         "map-template.tmx",
         "tileset.tsx",
         "rules/auto-tile-rules.tmx",
