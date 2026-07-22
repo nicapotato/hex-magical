@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="60" height="30" tilewidth="16" tileheight="16" infinite="0" nextlayerid="3" nextobjectid="4">
+<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="60" height="30" tilewidth="16" tileheight="16" infinite="0" nextlayerid="3" nextobjectid="6">
  <tileset firstgid="1" source="tileset.tsx"/>
  <layer id="1" name="terrain" width="60" height="30">
   <data encoding="csv">
@@ -44,6 +44,12 @@
   </object>
   <object id="3" name="ball-spawn" x="37.3333" y="58.6667">
    <point/>
+  </object>
+  <object id="4" name="boost" x="144" y="305.333">
+   <polygon points="0,0 21.3333,149.333 120,145.333 246.667,6.66667 173.333,-76"/>
+  </object>
+  <object id="5" name="no-build" x="150.667" y="32">
+   <polygon points="0,0 236,276 214.667,428 372,389.333 420,209.333 604,72 600,-28 -2.66667,-24"/>
   </object>
  </objectgroup>
 </map>

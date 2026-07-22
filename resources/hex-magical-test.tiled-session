@@ -7,11 +7,14 @@
             "expandedGroupLayers": [
                 3
             ],
+            "expandedObjectLayers": [
+                4
+            ],
             "scale": 1,
             "selectedLayer": 2,
             "viewCenter": {
-                "x": 224,
-                "y": 126
+                "x": 346,
+                "y": 210
             }
         },
         "map-3.tmx": {
@@ -21,8 +24,8 @@
             "scale": 0.75,
             "selectedLayer": 1,
             "viewCenter": {
-                "x": 276,
-                "y": 277.33333333333326
+                "x": 440,
+                "y": 356
             }
         },
         "rules/auto-tile-rules.tmx": {
@@ -36,6 +39,9 @@
         "tile-map.tmx": {
             "expandedGroupLayers": [
                 4
+            ],
+            "expandedObjectLayers": [
+                3
             ],
             "scale": 1.5,
             "selectedLayer": 0,
