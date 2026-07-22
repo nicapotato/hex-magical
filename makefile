@@ -142,6 +142,7 @@ hex-magical-ci:
 #   make release
 #   make release REF=main
 #   make release VERSION=0.0.2
+#   make hex-magical-release LEVEL_TESTS=false   (release without level-solution tests)
 hex-magical-release:
 	@V=$${VERSION:-$$(grep '^VERSION=' project.conf | cut -d= -f2)}; \
 		echo "🚀 Dispatching release for v$${V} (publish_gh_release=true → creates git tag)"; \
@@ -150,7 +151,8 @@ hex-magical-release:
 		-f build_platform=all \
 		-f publish_gh_release=true \
 		$(if $(VERSION),-f version="$(VERSION)",) \
-		$(if $(CHANNEL),-f channel="$(CHANNEL)",)
+		$(if $(CHANNEL),-f channel="$(CHANNEL)",) \
+		$(if $(filter false,$(LEVEL_TESTS)),-f run_level_tests=false,)
 
 hex-magical-ci-watch: ci
 	@sleep 2
