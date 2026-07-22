@@ -170,7 +170,9 @@ static const char *GetSolutionsDirectory(void)
 #else
     // Keep desktop development fixtures beside levels so F5-created solutions can
     // be committed and used directly by the headless test runner.
-    static char directory[512];
+    // 256 (resourcesDir) + "/solutions" + NUL fits provably — keeps GCC's
+    // -Wformat-truncation quiet here and in GetCurrentSolutionPath.
+    static char directory[288];
     snprintf(directory, sizeof(directory), "%s/solutions", resourcesDir);
     return directory;
 #endif
@@ -179,7 +181,9 @@ static const char *GetSolutionsDirectory(void)
 // <solution directory>/<level>.solution for the current level
 static const char *GetCurrentSolutionPath(void)
 {
-    static char path[512];
+    // Sized past the directory buffer + "/<name>.solution" so GCC's
+    // -Wformat-truncation can prove the snprintf always fits
+    static char path[832];
     const char *base = GetFileNameWithoutExt(GetTiledLevel(levelIndex)->tmxPath);
     snprintf(path, sizeof(path), "%s/%s.solution", GetSolutionsDirectory(), base);
     return path;
