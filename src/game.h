@@ -7,6 +7,8 @@
 #ifndef GAME_H
 #define GAME_H
 
+#include <stdbool.h>
+
 //----------------------------------------------------------------------------------
 // Defines and Macros
 //----------------------------------------------------------------------------------
@@ -33,6 +35,12 @@ void GameUnload(void);            // Unload resources / free game state
 // Level registry: every Tiled .tmx map found in resources/
 int GameGetLevelCount(void);
 const char *GameGetLevelName(int index);
+
+// Resources dir feeding the level registry. GameSetResourcesDir rescans the
+// new folder and swaps the registry; on failure (no loadable .tmx) the
+// current levels are kept and false is returned.
+const char *GameGetResourcesDir(void);
+bool GameSetResourcesDir(const char *dir);
 
 // Current view width in game pixels — follows the window aspect so wide/fullscreen
 // windows see more world horizontally. View height is always GAME_SCREEN_HEIGHT.

@@ -304,6 +304,59 @@ static void StartPlaying(void)
     LoadCurrentLevel();
 }
 
+const char *GameGetResourcesDir(void)
+{
+    return resourcesDir;
+}
+
+// Swap the level registry to a new folder (admin "LOAD ASSET FOLDER").
+// The folder needs the same layout as resources/: *.tmx maps + tileset.tsx/.png.
+// On failure the previous folder is rescanned so the game never ends up empty.
+bool GameSetResourcesDir(const char *dir)
+{
+    if (!DirectoryExists(dir))
+    {
+        fprintf(stderr, "RESOURCES: %s is not a directory\n", dir);
+        return false;
+    }
+    if (strlen(dir) >= sizeof(resourcesDir))
+    {
+        fprintf(stderr, "RESOURCES: path too long (%zu chars, max %zu): %s\n",
+                strlen(dir), sizeof(resourcesDir) - 1, dir);
+        return false;
+    }
+
+    char previous[sizeof(resourcesDir)];
+    snprintf(previous, sizeof(previous), "%s", resourcesDir);
+
+    for (int i = 0; i < tiledLevelCount; i++) TiledLevelUnload(&tiledLevels[i]);
+    tiledLevelCount = 0;
+
+    LoadTiledLevels(dir);
+    bool ok = (tiledLevelCount > 0);
+    if (ok)
+    {
+        snprintf(resourcesDir, sizeof(resourcesDir), "%s", dir);
+        fprintf(stderr, "RESOURCES: switched to %s (%d levels)\n", dir, tiledLevelCount);
+    }
+    else
+    {
+        fprintf(stderr, "RESOURCES: no loadable .tmx maps in %s (see TILED errors above) — keeping %s\n",
+                dir, previous);
+        LoadTiledLevels(previous);
+        if (tiledLevelCount == 0)
+        {
+            fprintf(stderr, "FATAL: previous resources dir %s no longer loads either\n", previous);
+            abort();
+        }
+    }
+
+    // Physics geometry points into the old registry slots — rebuild either way
+    levelIndex = 0;
+    if (screen != SCREEN_TITLE) StartPlaying();
+    return ok;
+}
+
 static void AdvanceLevel(void)
 {
     levelIndex++;
@@ -546,6 +599,16 @@ void GameUpdateDrawFrame(void)
             {
                 screen = SCREEN_PLAYING;
                 LoadCurrentLevel();
+            }
+            else if (adminAction == ADMIN_ACTION_PICK_FOLDER)
+            {
+                // Native folder dialog — blocks the loop; PhysicsStep clamps the
+                // large dt of the frame that resumes afterwards
+                char picked[512];
+                if (PlatformPickFolder(picked, sizeof(picked)))
+                {
+                    GameSetResourcesDir(picked);
+                }
             }
             if (adminAction != ADMIN_ACTION_NONE)
             {

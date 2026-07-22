@@ -21,7 +21,8 @@ BUNDLE_RESOURCES_DIR := $(CONTENTS_DIR)/Resources
 HEX_MAGICAL_WORKFLOW := .github/workflows/hex-magical-cicd.yml
 PLATFORM ?= all
 REF ?= $(shell git branch --show-current 2>/dev/null)
-# Optional overrides: VERSION=0.0.2 CHANNEL=web
+LEVEL_TESTS ?= true
+# Optional overrides: VERSION=0.0.2 CHANNEL=web LEVEL_TESTS=false
 
 clean:
 	rm -rf $(BUILD_DIR) $(WASM_BUILD_DIR) $(ITCH_DIR) $(ITCH_ZIP) \
@@ -112,23 +113,28 @@ help:
 	@echo "  release       - Full release: all platforms, itch + S3 + GitHub Release (creates tag from project.conf)"
 	@echo "  release-watch - Dispatch release and watch the run"
 	@echo ""
-	@echo "CI: PLATFORM=all|web|macos|windows  REF=branch  VERSION=  CHANNEL="
+	@echo "CI: PLATFORM=all|web|macos|windows  REF=branch  VERSION=  CHANNEL=  LEVEL_TESTS=true|false"
 	@echo "Examples:"
 	@echo "  make release"
 	@echo "  make release REF=main"
 	@echo "  make ci PLATFORM=web"
+	@echo "  make hex-magical-ci LEVEL_TESTS=false"
 
 # Dispatch the CI workflow. Examples:
 #   make ci
 #   make ci PLATFORM=macos
 #   make ci PLATFORM=windows VERSION=0.0.2
+#   make hex-magical-ci LEVEL_TESTS=false   (skip the headless level-solution tests)
 # Requires: gh (https://cli.github.com/), authenticated (`gh auth login`).
+# run_level_tests is only sent when disabling it, so dispatching a REF branch
+# that predates the input still works.
 hex-magical-ci:
 	gh workflow run "$(HEX_MAGICAL_WORKFLOW)" \
 		$(if $(REF),-r "$(REF)",) \
 		-f build_platform="$(PLATFORM)" \
 		$(if $(VERSION),-f version="$(VERSION)",) \
-		$(if $(CHANNEL),-f channel="$(CHANNEL)",)
+		$(if $(CHANNEL),-f channel="$(CHANNEL)",) \
+		$(if $(filter false,$(LEVEL_TESTS)),-f run_level_tests=false,)
 
 # Full release: build all platforms, publish itch.io + S3 + GitHub Release.
 # Creates git tag v<VERSION> from project.conf (or VERSION= override) via softprops/action-gh-release.

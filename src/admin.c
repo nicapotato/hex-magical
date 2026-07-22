@@ -19,6 +19,15 @@
 #define ADMIN_SLIDER_COUNT 3
 #define ADMIN_ACTION_BTN_H 26.0f
 #define ADMIN_GAP 8.0f
+#define ADMIN_PATH_FONT 10
+
+// Extra panel section for the asset-folder picker — desktop only (no native
+// dialog on web, and the web bundle ships its resources inside the .data file)
+#if defined(PLATFORM_WEB)
+    #define ADMIN_FOLDER_SECTION_H 0.0f
+#else
+    #define ADMIN_FOLDER_SECTION_H (ADMIN_GAP + ADMIN_ACTION_BTN_H + 4.0f + (float)ADMIN_PATH_FONT)
+#endif
 
 static bool adminOpen = false;
 
@@ -70,7 +79,8 @@ static Rectangle PanelRect(void)
     Rectangle btn = AdminGetButtonRect();
     float h = ADMIN_PAD + (float)ADMIN_HEADER_FONT + ADMIN_GAP
             + (float)ADMIN_SLIDER_COUNT * ADMIN_ROW_H
-            + ADMIN_GAP + ADMIN_ACTION_BTN_H + ADMIN_PAD;
+            + ADMIN_GAP + ADMIN_ACTION_BTN_H
+            + ADMIN_FOLDER_SECTION_H + ADMIN_PAD;
     return (Rectangle){
         (float)GameGetViewWidth() - ADMIN_PANEL_W - 8.0f,
         btn.y + btn.height + 8.0f,
@@ -100,11 +110,25 @@ static Rectangle ActionButtonRect(const Rectangle *panel, int index)
     float btnW = (totalW - ADMIN_GAP) * 0.5f;
     return (Rectangle){
         panel->x + ADMIN_PAD + (float)index * (btnW + ADMIN_GAP),
-        panel->y + panel->height - ADMIN_PAD - ADMIN_ACTION_BTN_H,
+        panel->y + panel->height - ADMIN_PAD - ADMIN_FOLDER_SECTION_H - ADMIN_ACTION_BTN_H,
         btnW,
         ADMIN_ACTION_BTN_H
     };
 }
+
+#if !defined(PLATFORM_WEB)
+// Full-width "LOAD ASSET FOLDER" button below RESET/RESPAWN
+static Rectangle FolderButtonRect(const Rectangle *panel)
+{
+    Rectangle action = ActionButtonRect(panel, 0);
+    return (Rectangle){
+        panel->x + ADMIN_PAD,
+        action.y + ADMIN_ACTION_BTN_H + ADMIN_GAP,
+        panel->width - ADMIN_PAD * 2.0f,
+        ADMIN_ACTION_BTN_H
+    };
+}
+#endif
 
 //----------------------------------------------------------------------------------
 // Module Functions Definition
@@ -151,6 +175,12 @@ AdminAction AdminHandleInput(PhysicsWorld *phys, Vector2 mouse, bool lmbDown, bo
         {
             return ADMIN_ACTION_RESPAWN;
         }
+#if !defined(PLATFORM_WEB)
+        if (CheckCollisionPointRec(mouse, FolderButtonRect(&panel)))
+        {
+            return ADMIN_ACTION_PICK_FOLDER;
+        }
+#endif
     }
 
     for (int i = 0; i < ADMIN_SLIDER_COUNT; i++)
@@ -232,4 +262,24 @@ void AdminDraw(const PhysicsWorld *phys, Vector2 mouse)
     DrawRectangleLinesEx(respawnBtn, 2.0f, INK);
     tw = MeasureText("RESPAWN", ADMIN_FONT);
     DrawText("RESPAWN", (int)(respawnBtn.x + (respawnBtn.width - (float)tw) * 0.5f), (int)(respawnBtn.y + 6.0f), ADMIN_FONT, PAPER_TEXT);
+
+#if !defined(PLATFORM_WEB)
+    Rectangle folderBtn = FolderButtonRect(&panel);
+    bool folderHover = CheckCollisionPointRec(mouse, folderBtn);
+    DrawRectangleRec(folderBtn, folderHover ? ACCENT_RED : CRAYON);
+    DrawRectangleLinesEx(folderBtn, 2.0f, INK);
+    tw = MeasureText("LOAD ASSET FOLDER...", ADMIN_FONT);
+    DrawText("LOAD ASSET FOLDER...", (int)(folderBtn.x + (folderBtn.width - (float)tw) * 0.5f), (int)(folderBtn.y + 6.0f), ADMIN_FONT, PAPER_TEXT);
+
+    // Current folder, right-trimmed so the tail (the interesting part) stays visible
+    const char *dir = GameGetResourcesDir();
+    int dirW = MeasureText(dir, ADMIN_PATH_FONT);
+    int maxW = (int)(panel.width - ADMIN_PAD * 2.0f);
+    while ((dirW > maxW) && (*dir != '\0'))
+    {
+        dir++;
+        dirW = MeasureText(dir, ADMIN_PATH_FONT);
+    }
+    DrawText(dir, (int)(panel.x + ADMIN_PAD), (int)(folderBtn.y + folderBtn.height + 4.0f), ADMIN_PATH_FONT, CRAYON);
+#endif
 }
