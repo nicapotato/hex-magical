@@ -9,11 +9,11 @@
 *     - Optional polygon/rect objects named "no-build": players cannot sketch inside
 *     - Optional polygon/rect objects named "pit": ball inside = game over
 *     - Optional polygon/rect objects named "boost": ball inside gets a speed boost
-*     - Required custom properties (map or object-layer level):
-*         "line-capacity" (float, tile-widths of crayon ink)
-*         "boost_line-capacity" (float, tile-widths of boost line ink)
-*         "cannon-count" (int, placeable cannons)
-*       Zero disables the resource and hides it from the player HUD.
+    *     - Required custom properties on the map (Map > Custom Properties in Tiled):
+    *         "line-capacity" (float, tile-widths of crayon ink)
+    *         "boost_line-capacity" (float, tile-widths of boost line ink)
+    *         "cannon-count" (int, placeable cannons)
+    *       Zero disables the resource and hides it from the player HUD.
 *     - CSV-encoded layer data, non-infinite map
 *
 ********************************************************************************************/

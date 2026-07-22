@@ -16,7 +16,7 @@
             "scale": 3,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 142.5,
+                "x": 142.66666666666663,
                 "y": 218.33333333333331
             }
         },
@@ -27,7 +27,7 @@
             "scale": 0.75,
             "selectedLayer": 2,
             "viewCenter": {
-                "x": 476.6666666666667,
+                "x": 476,
                 "y": 316
             }
         },
@@ -94,13 +94,13 @@
     "project": "hex-magical-test.tiled-project",
     "property.type": "float",
     "recentFiles": [
+        "map-3.tmx",
+        "map-2.tmx",
         "map-4.tmx",
         "map-5.tmx",
         "map-template.tmx",
         "tileset.tsx",
         "rules/auto-tile-rules.tmx",
-        "map-2.tmx",
-        "map-3.tmx",
         "tile-map.tmx"
     ],
     "tileset.lastUsedFormat": "tsx",

@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="30" height="20" tilewidth="16" tileheight="16" infinite="0" nextlayerid="5" nextobjectid="9">
+ <properties>
+  <property name="boost_line-capacity" type="float" value="20000"/>
+  <property name="cannon-count" type="int" value="2"/>
+  <property name="line-capacity" type="float" value="20000"/>
+ </properties>
  <tileset firstgid="1" source="tileset.tsx"/>
  <tileset firstgid="111" source=":/automap-tiles.tsx"/>
  <layer id="1" name="prototype" width="30" height="20" visible="0">
@@ -51,13 +56,6 @@
 </data>
  </layer>
  <objectgroup id="3" name="coords">
-  <properties>
-   
-   <property name="boost_line-capacity" type="float" value="20000"/>
-   <property name="cannon-count" type="int" value="2"/>
-   <property name="line-capacity" type="float" value="20000"/>
-  
-  </properties>
   <object id="5" name="ball-spawn" x="55.3333" y="234.667">
    <point/>
   </object>

@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="60" height="30" tilewidth="16" tileheight="16" infinite="0" nextlayerid="3" nextobjectid="6">
+ <properties>
+  <property name="boost_line-capacity" type="float" value="20000"/>
+  <property name="cannon-count" type="int" value="3"/>
+  <property name="line-capacity" type="float" value="20000"/>
+ </properties>
  <tileset firstgid="1" source="tileset.tsx"/>
  <layer id="1" name="terrain" width="60" height="30">
   <data encoding="csv">
@@ -36,13 +41,6 @@
 </data>
  </layer>
  <objectgroup id="2" name="game">
-  <properties>
-   
-   <property name="boost_line-capacity" type="float" value="20000"/>
-   <property name="cannon-count" type="int" value="3"/>
-   <property name="line-capacity" type="float" value="20000"/>
-  
-  </properties>
   <object id="2" name="finish-line" x="913.333" y="338.667">
    <polygon points="0,0 -1.33333,122.667 28,122.667 28,-2.66667"/>
   </object>
