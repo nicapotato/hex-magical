@@ -15,6 +15,11 @@
 // World units are pixels; Box2D's default speed cap (400 units/s) would choke
 // ramp launches, so allow genuinely fast flight
 #define WORLD_MAX_SPEED 10000.0f
+// Boost zones accelerate the ball along its velocity — roughly 2x gravity, strong
+// enough to carry it across gaps/pits it could not clear on its own
+#define BOOST_ACCEL 4200.0f
+// Below this speed the ball has no meaningful direction to boost along
+#define BOOST_MIN_SPEED 1.0f
 
 //----------------------------------------------------------------------------------
 // Local helpers
@@ -71,6 +76,37 @@ static void CreateStaticBoxes(PhysicsWorld *phys, const LevelDef *level)
 
     phys->staticBoxes = level->boxes;
     phys->staticBoxCount = level->boxCount;
+}
+
+static void CreateStaticPolygons(PhysicsWorld *phys, const LevelDef *level)
+{
+    for (int i = 0; i < level->polygonCount; i++)
+    {
+        const StaticPolygon *source = &level->polygons[i];
+        b2Vec2 points[STATIC_POLYGON_MAX_POINTS];
+        for (int p = 0; p < source->pointCount; p++)
+        {
+            points[p] = ToB2(source->points[p]);
+        }
+
+        b2Hull hull = b2ComputeHull(points, source->pointCount);
+        if (hull.count < 3)
+        {
+            TraceLog(LOG_ERROR, "PHYSICS: invalid static polygon %d", i);
+            continue;
+        }
+
+        b2BodyDef bodyDef = b2DefaultBodyDef();
+        bodyDef.type = b2_staticBody;
+        b2BodyId bodyId = b2CreateBody(phys->worldId, &bodyDef);
+
+        b2ShapeDef shapeDef = b2DefaultShapeDef();
+        shapeDef.material.friction = 0.6f;
+        shapeDef.material.restitution = 0.1f;
+
+        b2Polygon polygon = b2MakePolygon(&hull, 0.0f);
+        b2CreatePolygonShape(bodyId, &shapeDef, &polygon);
+    }
 }
 
 static void CreateBall(PhysicsWorld *phys, const LevelDef *level)
@@ -169,9 +205,14 @@ void PhysicsLoadLevel(PhysicsWorld *phys, const LevelDef *level)
     phys->valid = true;
 
     CreateStaticBoxes(phys, level);
+    CreateStaticPolygons(phys, level);
     CreateBall(phys, level);
 
     phys->finishLine = level->finishLine;
+    phys->pits = level->pits;
+    phys->pitCount = level->pitCount;
+    phys->boosts = level->boosts;
+    phys->boostCount = level->boostCount;
 }
 
 void PhysicsStartSimulation(PhysicsWorld *phys)
@@ -216,6 +257,29 @@ bool PhysicsIsSimulating(const PhysicsWorld *phys)
     return phys->valid && phys->simulating;
 }
 
+// While the ball sits inside a boost zone, push it along its velocity so it can
+// carry across gaps (no-build, pits) it could not clear on its own
+static void ApplyBoostZones(PhysicsWorld *phys)
+{
+    if ((phys->boostCount <= 0) || !b2Body_IsValid(phys->ballId)) return;
+
+    Vector2 ball = FromB2(b2Body_GetPosition(phys->ballId));
+    bool inside = false;
+    for (int z = 0; z < phys->boostCount; z++)
+    {
+        if (PolyZoneContains(&phys->boosts[z], ball)) { inside = true; break; }
+    }
+    if (!inside) return;
+
+    b2Vec2 vel = b2Body_GetLinearVelocity(phys->ballId);
+    float speed = sqrtf(vel.x * vel.x + vel.y * vel.y);
+    if (speed < BOOST_MIN_SPEED) return;
+
+    float mass = b2Body_GetMass(phys->ballId);
+    b2Vec2 force = { vel.x / speed * BOOST_ACCEL * mass, vel.y / speed * BOOST_ACCEL * mass };
+    b2Body_ApplyForceToCenter(phys->ballId, force, true);
+}
+
 void PhysicsStep(PhysicsWorld *phys, float dt)
 {
     if (!phys->valid || !phys->simulating) return;
@@ -227,6 +291,7 @@ void PhysicsStep(PhysicsWorld *phys, float dt)
 
     while (phys->accumulator >= step)
     {
+        ApplyBoostZones(phys);
         b2World_Step(phys->worldId, step, PHYSICS_SUBSTEPS);
         phys->accumulator -= step;
     }
@@ -247,7 +312,18 @@ float PhysicsGetBallAngle(const PhysicsWorld *phys)
 bool PhysicsCheckWin(const PhysicsWorld *phys)
 {
     if (!phys->valid) return false;
-    return CheckCollisionCircleRec(PhysicsGetBallPos(phys), phys->ballRadius, phys->finishLine);
+    return PolyZoneContains(&phys->finishLine, PhysicsGetBallPos(phys));
+}
+
+bool PhysicsCheckPit(const PhysicsWorld *phys)
+{
+    if (!phys->valid) return false;
+    Vector2 ball = PhysicsGetBallPos(phys);
+    for (int z = 0; z < phys->pitCount; z++)
+    {
+        if (PolyZoneContains(&phys->pits[z], ball)) return true;
+    }
+    return false;
 }
 
 b2Transform PhysicsGetBodyTransform(b2BodyId bodyId)

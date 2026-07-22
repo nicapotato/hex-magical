@@ -182,6 +182,16 @@ void RenderPhysicsDebug(PhysicsWorld *phys, const LevelDef *level)
         DrawDebugRotatedBox(box->x, box->y, box->halfWidth, box->halfHeight, box->angleDeg,
                             (Color){ 80, 220, 80, 255 });
     }
+    for (int i = 0; i < level->polygonCount; i++)
+    {
+        const StaticPolygon *polygon = &level->polygons[i];
+        for (int p = 0; p < polygon->pointCount; p++)
+        {
+            DrawLineEx(polygon->points[p],
+                       polygon->points[(p + 1) % polygon->pointCount],
+                       2.0f, (Color){ 80, 220, 80, 255 });
+        }
+    }
 
     // Drawn body collision shapes (cyan) — actual Box2D polygons/planks
     for (int i = 0; i < MAX_DRAWN_BODIES; i++)
@@ -194,7 +204,12 @@ void RenderPhysicsDebug(PhysicsWorld *phys, const LevelDef *level)
     DrawDebugBodyShapes(phys->ballId, (Color){ 255, 60, 200, 255 });
 
     // Finish-line win area
-    DrawRectangleLinesEx(phys->finishLine, 2.0f, (Color){ 255, 220, 40, 255 });
+    for (int i = 0; i < phys->finishLine.pointCount; i++)
+    {
+        DrawLineEx(phys->finishLine.points[i],
+                   phys->finishLine.points[(i + 1) % phys->finishLine.pointCount],
+                   2.0f, (Color){ 255, 220, 40, 255 });
+    }
 }
 
 void RenderSketchPreview(const SketchState *sketch)
@@ -203,30 +218,21 @@ void RenderSketchPreview(const SketchState *sketch)
     DrawCrayonPolyline(sketch->points, sketch->pointCount, sketch->crayonColor, STROKE_PHYSICS_RADIUS * 2.0f);
 }
 
-void RenderFinishLine(Rectangle bounds)
+void RenderFinishLine(const PolyZone *zone)
 {
     Color fill = STAR_YELLOW;
-    fill.a = 45;
-    DrawRectangleRec(bounds, fill);
+    fill.a = 60;
 
-    const int rows = 8;
-    float cellHeight = bounds.height / (float)rows;
-    float cellWidth = bounds.width * 0.5f;
-    for (int row = 0; row < rows; row++)
+    // Fan fill + bold outline (zones from Tiled are convex-ish; outline is exact)
+    for (int i = 1; i < zone->pointCount - 1; i++)
     {
-        for (int col = 0; col < 2; col++)
-        {
-            if (((row + col) % 2) != 0) continue;
-            Rectangle cell = {
-                bounds.x + (float)col * cellWidth,
-                bounds.y + (float)row * cellHeight,
-                cellWidth,
-                cellHeight
-            };
-            DrawRectangleRec(cell, STAR_YELLOW);
-        }
+        DrawTriangle(zone->points[0], zone->points[i + 1], zone->points[i], fill);
+        DrawTriangle(zone->points[0], zone->points[i], zone->points[i + 1], fill);
     }
-    DrawRectangleLinesEx(bounds, 3.0f, STAR_YELLOW);
+    for (int i = 0; i < zone->pointCount; i++)
+    {
+        DrawLineEx(zone->points[i], zone->points[(i + 1) % zone->pointCount], 3.0f, STAR_YELLOW);
+    }
 }
 
 void RenderBall(Vector2 pos, float radius, float angle)
@@ -367,7 +373,7 @@ void RenderHud(const char *levelName, int levelIndex, bool showTitle, bool showP
         DrawTextCentered("HEX MAGICAL", 200, 48, INK_BROWN);
         DrawTextCentered("a line rider crayon toy", 260, 22, CRAYON_BROWN);
         DrawTextCentered("Draw track under the ball, then send it to the star", 340, 18, INK_BROWN);
-        DrawTextCentered("LMB draw   RMB erase   ENTER start/stop   R restart   WASD pan   +/- zoom", 380, 18, CRAYON_BROWN);
+        DrawTextCentered("LMB draw   RMB erase   SPACE start/stop   R restart   WASD pan   +/- zoom", 380, 18, CRAYON_BROWN);
         DrawTextCentered("1 save solution   2 load   3 delete", 410, 18, CRAYON_BROWN);
         DrawTextCentered("Press SPACE or click to play", 480, 22, BALL_RED);
         DrawFpsIndicator();
@@ -383,11 +389,11 @@ void RenderHud(const char *levelName, int levelIndex, bool showTitle, bool showP
         DrawUiButton(btn, simulating ? "STOP" : "START", simulating, CheckCollisionPointRec(uiMouse, btn));
         if (simulating)
         {
-            DrawText("Running — STOP or ENTER to go back to drawing", 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
+            DrawText("Running — STOP or SPACE to go back to drawing", 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
         }
         else
         {
-            DrawText("Draw track, then START or ENTER   |   1 save solution  2 load  3 delete", 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
+            DrawText("Draw track, then START or SPACE   |   1 save solution  2 load  3 delete", 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
         }
     }
     else
@@ -397,7 +403,7 @@ void RenderHud(const char *levelName, int levelIndex, bool showTitle, bool showP
 
     if (debugMode)
     {
-        DrawText("debug: green=static  cyan=stroke capsules  magenta=ball  yellow=star",
+        DrawText("debug: green=static  cyan=stroke capsules  magenta=ball  yellow=finish line",
                  16, 44, 14, (Color){ 40, 100, 40, 255 });
     }
 
@@ -457,12 +463,12 @@ static void DrawWinMenuStat(Rectangle panel, int row, const char *label, const c
     DrawText(value, (int)(panel.x + panel.width - WIN_MENU_PAD - (float)vw), (int)y, WIN_MENU_FONT, INK_BROWN);
 }
 
-void RenderWinMenu(int strokeCount, float runTime, bool hasNext, Vector2 uiMouse)
+void RenderWinMenu(int strokeCount, float runTime, bool hasNext, bool solutionSaved, Vector2 uiMouse)
 {
     // Dim the scene but keep it visible — the run continues behind the panel
     DrawRectangle(0, 0, GameGetViewWidth(), GAME_SCREEN_HEIGHT, (Color){ 60, 45, 30, 140 });
 
-    int buttonCount = hasNext ? 4 : 3;
+    int buttonCount = hasNext ? 5 : 4;
     Rectangle panel = WinMenuPanelRect(buttonCount);
     DrawRectangleRec(panel, (Color){ 245, 236, 214, 250 });
     DrawRectangleLinesEx(panel, 3.0f, INK_BROWN);
@@ -478,11 +484,12 @@ void RenderWinMenu(int strokeCount, float runTime, bool hasNext, Vector2 uiMouse
     DrawWinMenuStat(panel, 0, "Track drawn", TextFormat("%d stroke%s", strokeCount, (strokeCount == 1) ? "" : "s"));
     DrawWinMenuStat(panel, 1, "Run time", timeBuf);
 
-    const char *labels[4];
+    const char *labels[5];
     labels[0] = "Admire creation";
-    labels[1] = "Restart level";
-    labels[2] = hasNext ? "Next level" : "Quit to title";
-    labels[3] = "Quit to title";
+    labels[1] = solutionSaved ? "Solution saved!" : "Save as solution";
+    labels[2] = "Restart level";
+    labels[3] = hasNext ? "Next level" : "Quit to title";
+    labels[4] = "Quit to title";
 
     for (int i = 0; i < buttonCount; i++)
     {
@@ -490,7 +497,7 @@ void RenderWinMenu(int strokeCount, float runTime, bool hasNext, Vector2 uiMouse
         DrawUiButton(btn, labels[i], false, CheckCollisionPointRec(uiMouse, btn));
     }
 
-    const char *hint = "H or ESC admire   R restart   N next   Q quit to title";
+    const char *hint = "H admire   S save   R restart   N next   Q quit";
     int hw = MeasureText(hint, 14);
     DrawText(hint, (GameGetViewWidth() - hw) / 2, (int)(panel.y + panel.height + 12), 14, PAPER);
 }
@@ -499,4 +506,31 @@ void RenderWinAdmireHint(void)
 {
     DrawTextCentered("Admiring your creation — H or ESC to reopen the menu",
                      GAME_SCREEN_HEIGHT - 56, 16, BALL_RED);
+}
+
+void RenderGameOverMenu(Vector2 uiMouse)
+{
+    DrawRectangle(0, 0, GameGetViewWidth(), GAME_SCREEN_HEIGHT, (Color){ 60, 45, 30, 140 });
+
+    const int buttonCount = 3;
+    Rectangle panel = WinMenuPanelRect(buttonCount);
+    DrawRectangleRec(panel, (Color){ 245, 236, 214, 250 });
+    DrawRectangleLinesEx(panel, 3.0f, INK_BROWN);
+    DrawText("Into the pit!", (int)(panel.x + WIN_MENU_PAD), (int)(panel.y + WIN_MENU_PAD),
+             WIN_MENU_TITLE_FONT, BALL_RED);
+    DrawText("The ball fell into a pit — game over.",
+             (int)(panel.x + WIN_MENU_PAD),
+             (int)(panel.y + WIN_MENU_PAD + (float)WIN_MENU_TITLE_FONT + 16.0f),
+             WIN_MENU_FONT, CRAYON_BROWN);
+
+    const char *labels[3] = { "Try again", "Restart level", "Quit to title" };
+    for (int i = 0; i < buttonCount; i++)
+    {
+        Rectangle btn = RenderGetWinMenuButtonRect(i, buttonCount);
+        DrawUiButton(btn, labels[i], false, CheckCollisionPointRec(uiMouse, btn));
+    }
+
+    const char *hint = "ENTER try again   R restart   Q quit";
+    int hw = MeasureText(hint, 14);
+    DrawText(hint, (GameGetViewWidth() - hw) / 2, (int)(panel.y + panel.height + 12), 14, PAPER);
 }

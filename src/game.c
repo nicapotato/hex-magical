@@ -33,6 +33,7 @@ static SketchState sketch = { 0 };
 static bool debugMode = false;
 static bool levelMenuOpen = false;
 static bool winMenuShow = true; // false = admiring the finished run
+static bool winSolutionSaved = false;
 static float runTime = 0.0f;    // seconds since Start, frozen at win
 static float viewZoom = 1.0f;
 static Vector2 viewPan = { 0.0f, 0.0f }; // camera target offset from level center
@@ -186,13 +187,13 @@ static const char *GetCurrentSolutionPath(void)
 
 // F5: snapshot the drawn strokes + tunables so players can come back to them
 // and devs can commit them as level tests (run via `make test`)
-static void SaveCurrentSolution(void)
+static bool SaveCurrentSolution(void)
 {
     const char *solutionsDir = GetSolutionsDirectory();
     if (!DirectoryExists(solutionsDir) && (MakeDirectory(solutionsDir) != 0))
     {
         fprintf(stderr, "SOLUTION: failed to create directory %s\n", solutionsDir);
-        return;
+        return false;
     }
 
     const char *levelFile = GetFileName(GetTiledLevel(levelIndex)->tmxPath);
@@ -203,7 +204,9 @@ static void SaveCurrentSolution(void)
     {
         fprintf(stderr, "SOLUTION: saved %d strokes to %s\n", solutionScratch.strokeCount, path);
         PlatformSyncFiles();
+        return true;
     }
+    return false;
 }
 
 // F9: reset the level and replay the saved strokes — back in build phase, free to edit
@@ -282,10 +285,10 @@ static int CountActiveStrokes(void)
     return count;
 }
 
-// Enter or the START/STOP button toggles simulation either way
+// Space/Enter or the START/STOP button toggles simulation either way
 static bool WantsToggleSimulation(bool lmbPressed, Vector2 uiMouse)
 {
-    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)) return true;
+    if (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)) return true;
     if (lmbPressed && CheckCollisionPointRec(uiMouse, RenderGetStartButtonRect())) return true;
     return false;
 }
@@ -539,16 +542,11 @@ void GameUpdateDrawFrame(void)
                 bool sketchLmbPressed = lmbPressed && !uiClick;
                 bool sketchLmbDown = lmbDown && !uiClick;
 
-                // No-build zones: can't start a stroke inside, and a stroke that
-                // wanders in is cancelled rather than spanning the zone
-                if (TiledLevelNoBuildContains(GetTiledLevel(levelIndex), worldMouse))
-                {
-                    if (sketch.drawing) SketchCancel(&sketch);
-                    sketchLmbPressed = false;
-                    sketchLmbDown = false;
-                }
+                // No-build zones don't cancel the stroke — ink simply doesn't
+                // register inside, splitting the stroke around the zone
+                bool inNoBuild = TiledLevelNoBuildContains(GetTiledLevel(levelIndex), worldMouse);
 
-                SketchUpdate(&sketch, &physics, worldMouse, sketchLmbDown, sketchLmbPressed, rmbPressed);
+                SketchUpdate(&sketch, &physics, worldMouse, sketchLmbDown, sketchLmbPressed, rmbPressed, inNoBuild);
             }
 
             PhysicsStep(&physics, dt);
@@ -558,6 +556,37 @@ void GameUpdateDrawFrame(void)
             {
                 screen = SCREEN_WIN;
                 winMenuShow = true;
+                winSolutionSaved = false;
+            }
+            else if (PhysicsIsSimulating(&physics) && PhysicsCheckPit(&physics))
+            {
+                screen = SCREEN_GAMEOVER;
+            }
+        }
+    }
+    else if (screen == SCREEN_GAMEOVER)
+    {
+        // Fell into a pit. Strokes survive — Try again goes back to the build phase.
+        if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_T))
+        {
+            PhysicsStopSimulation(&physics);
+            screen = SCREEN_PLAYING;
+        }
+        else if (IsKeyPressed(KEY_R)) { StartPlaying(); }
+        else if (IsKeyPressed(KEY_Q)) { QuitToTitle(); }
+        else if (lmbPressed)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                if (!CheckCollisionPointRec(uiMouse, RenderGetWinMenuButtonRect(i, 3))) continue;
+                if (i == 0)
+                {
+                    PhysicsStopSimulation(&physics); // Try again (keep strokes)
+                    screen = SCREEN_PLAYING;
+                }
+                else if (i == 1) StartPlaying();     // Restart level (fresh)
+                else QuitToTitle();                  // Quit to title
+                break;
             }
         }
     }
@@ -567,13 +596,14 @@ void GameUpdateDrawFrame(void)
         PhysicsStep(&physics, dt);
 
         bool hasNext = (levelIndex + 1) < GameGetLevelCount();
-        int buttonCount = hasNext ? 4 : 3;
+        int buttonCount = hasNext ? 5 : 4;
 
         if (!winMenuShow)
         {
             if (IsKeyPressed(KEY_H) || IsKeyPressed(KEY_ESCAPE)) winMenuShow = true;
         }
         else if (IsKeyPressed(KEY_R)) { StartPlaying(); }
+        else if (IsKeyPressed(KEY_S)) { winSolutionSaved = SaveCurrentSolution(); }
         else if (IsKeyPressed(KEY_N) && hasNext) { AdvanceLevel(); }
         else if (IsKeyPressed(KEY_Q)) { QuitToTitle(); }
         else if (IsKeyPressed(KEY_H) || IsKeyPressed(KEY_ESCAPE)) { winMenuShow = false; }
@@ -583,8 +613,9 @@ void GameUpdateDrawFrame(void)
             {
                 if (!CheckCollisionPointRec(uiMouse, RenderGetWinMenuButtonRect(i, buttonCount))) continue;
                 if (i == 0) winMenuShow = false;                  // Admire creation
-                else if (i == 1) StartPlaying();                  // Restart level
-                else if ((i == 2) && hasNext) AdvanceLevel();     // Next level
+                else if (i == 1) winSolutionSaved = SaveCurrentSolution();
+                else if (i == 2) StartPlaying();                  // Restart level
+                else if ((i == 3) && hasNext) AdvanceLevel();     // Next level
                 else QuitToTitle();                               // Quit to title
                 break;
             }
@@ -610,7 +641,7 @@ void GameUpdateDrawFrame(void)
                 RenderTiledLevel(GetTiledLevel(levelIndex)); // tile art + no-build overlay
                 RenderPhysics(&physics);
                 RenderSketchPreview(&sketch);
-                RenderFinishLine(physics.finishLine);
+                RenderFinishLine(&physics.finishLine);
                 RenderBall(PhysicsGetBallPos(&physics), physics.ballRadius, PhysicsGetBallAngle(&physics));
 
                 if (debugMode)
@@ -629,8 +660,13 @@ void GameUpdateDrawFrame(void)
             if (screen == SCREEN_WIN)
             {
                 bool hasNext = (levelIndex + 1) < GameGetLevelCount();
-                if (winMenuShow) RenderWinMenu(CountActiveStrokes(), runTime, hasNext, uiMouse);
+                if (winMenuShow) RenderWinMenu(CountActiveStrokes(), runTime, hasNext,
+                                               winSolutionSaved, uiMouse);
                 else RenderWinAdmireHint();
+            }
+            else if (screen == SCREEN_GAMEOVER)
+            {
+                RenderGameOverMenu(uiMouse);
             }
         }
     EndTextureMode();

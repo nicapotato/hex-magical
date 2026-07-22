@@ -21,7 +21,7 @@ int main(void)
     SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE);
 #endif
 
-    InitWindow(GAME_SCREEN_WIDTH, GAME_SCREEN_HEIGHT, "hex-magical — crayon physics");
+    InitWindow(GAME_SCREEN_WIDTH, GAME_SCREEN_HEIGHT, "Hex Magical");
 
 #if !defined(PLATFORM_WEB)
     SetWindowMinSize(GAME_SCREEN_WIDTH / 2, GAME_SCREEN_HEIGHT / 2);

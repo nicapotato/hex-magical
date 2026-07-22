@@ -123,6 +123,13 @@ static bool RunSolution(const char *path)
             won = true;
             break;
         }
+        if (PhysicsCheckPit(&physics))
+        {
+            Vector2 ball = PhysicsGetBallPos(&physics);
+            printf("WARN %s: ball fell into a pit at (%.1f, %.1f) after %d steps\n",
+                   name, ball.x, ball.y, steps);
+            break;
+        }
     }
 
     if (won)

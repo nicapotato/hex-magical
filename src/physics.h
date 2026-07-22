@@ -58,7 +58,12 @@ typedef struct PhysicsWorld
     float ballRadius;
     Vector2 ballSpawn; // level spawn — Stop resets the ball here
 
-    Rectangle finishLine;
+    PolyZone finishLine;
+
+    const PolyZone *pits;   // ball inside = game over
+    int pitCount;
+    const PolyZone *boosts; // ball inside gets a speed boost each step
+    int boostCount;
 
     DrawnBody drawn[MAX_DRAWN_BODIES];
     int drawnCount;
@@ -87,6 +92,7 @@ bool PhysicsIsSimulating(const PhysicsWorld *phys);
 Vector2 PhysicsGetBallPos(const PhysicsWorld *phys);
 float PhysicsGetBallAngle(const PhysicsWorld *phys);
 bool PhysicsCheckWin(const PhysicsWorld *phys);
+bool PhysicsCheckPit(const PhysicsWorld *phys); // ball fell into a pit = game over
 
 // Create a static capsule-chain track from world-space stroke points. Returns drawn index or -1.
 int PhysicsCreateDrawnBody(PhysicsWorld *phys, const Vector2 *worldPoints, int count, Color color);

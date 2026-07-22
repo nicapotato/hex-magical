@@ -19,7 +19,8 @@
 typedef enum {
     SCREEN_TITLE = 0,
     SCREEN_PLAYING,
-    SCREEN_WIN
+    SCREEN_WIN,
+    SCREEN_GAMEOVER // ball fell into a pit
 } GameScreen;
 
 //----------------------------------------------------------------------------------

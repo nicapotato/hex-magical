@@ -7,39 +7,45 @@
             "expandedGroupLayers": [
                 3
             ],
-            "expandedObjectLayers": [
-                3,
-                4
-            ],
-            "scale": 2,
+            "scale": 1,
             "selectedLayer": 2,
             "viewCenter": {
-                "x": 668.5,
-                "y": 128.5
+                "x": 224,
+                "y": 126
+            }
+        },
+        "map-3.tmx": {
+            "expandedObjectLayers": [
+                2
+            ],
+            "scale": 0.75,
+            "selectedLayer": 1,
+            "viewCenter": {
+                "x": 276,
+                "y": 277.33333333333326
             }
         },
         "rules/auto-tile-rules.tmx": {
-            "scale": 3,
+            "scale": 2,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 102.83333333333333,
-                "y": 145.66666666666666
+                "x": 182,
+                "y": 176.5
             }
         },
         "tile-map.tmx": {
             "expandedGroupLayers": [
                 4
             ],
-            "expandedObjectLayers": [
-                3,
-                4
-            ],
             "scale": 1.5,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 240.66666666666663,
-                "y": 161.33333333333334
+                "x": 241.33333333333334,
+                "y": 213.33333333333334
             }
+        },
+        "tileset.tsx": {
+            "scaleInEditor": 2
         }
     },
     "last.imagePath": "/Users/nicapotato/Documents/repo/games/hex-magical/resources",
@@ -51,6 +57,10 @@
     "project": "hex-magical-test.tiled-project",
     "property.type": "bool",
     "recentFiles": [
+        "map-3.tmx",
+        "rules/auto-tile-rules.tmx",
+        "tileset.tsx",
+        "map-2.tmx"
     ],
     "tileset.lastUsedFormat": "tsx",
     "tileset.tileSize": {

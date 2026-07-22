@@ -3,11 +3,12 @@
 *   tiled.h - Tiled (.tmx) level loading for hex-magical
 *
 *   Conventions expected in the .tmx (strict — load fails loud otherwise):
-*     - Tile layer "prototype": gid 15 = solid collision, anything else = air
-*     - Tile layer "terrain":   visual tiles drawn from tileset.png (same dir as .tmx)
+*     - Tile layer "terrain": visual tiles whose TSX collision objects define physics
 *     - Point object named "ball-spawn" (or "ball")
-*     - Rectangle object named "finish-line"
+*     - Polygon/rect object named "finish-line": ball touching it wins
 *     - Optional polygon/rect objects named "no-build": players cannot sketch inside
+*     - Optional polygon/rect objects named "pit": ball inside = game over
+*     - Optional polygon/rect objects named "boost": ball inside gets a speed boost
 *     - CSV-encoded layer data, non-infinite map
 *
 ********************************************************************************************/
@@ -23,14 +24,8 @@
 #define TILED_MAX_W 64
 #define TILED_MAX_H 64
 #define TILED_MAX_BOXES 256
-#define TILED_MAX_NOBUILD 8
-#define TILED_MAX_NOBUILD_POINTS 32
-
-typedef struct NoBuildZone
-{
-    Vector2 points[TILED_MAX_NOBUILD_POINTS]; // canvas coords, closed polygon
-    int pointCount;
-} NoBuildZone;
+#define TILED_MAX_POLYGONS 512
+#define TILED_MAX_ZONES 8
 
 typedef struct TiledLevel
 {
@@ -38,6 +33,7 @@ typedef struct TiledLevel
     char tmxPath[512];
     char name[64];
     long modTime;
+    long tilesetModTime;
 
     int mapWidth;      // tiles
     int mapHeight;
@@ -52,14 +48,21 @@ typedef struct TiledLevel
     int tilesetColumns;
     int tilesetCount;
 
-    // Greedy-merged collision rectangles from the prototype layer
+    // Full terrain tiles are merged into boxes; custom TSX shapes remain polygons.
     StaticBox boxes[TILED_MAX_BOXES];
     int boxCount;
+    StaticPolygon polygons[TILED_MAX_POLYGONS];
+    int polygonCount;
 
-    NoBuildZone noBuild[TILED_MAX_NOBUILD];
+    PolyZone finishLine;
+    PolyZone noBuild[TILED_MAX_ZONES];
     int noBuildCount;
+    PolyZone pits[TILED_MAX_ZONES];
+    int pitCount;
+    PolyZone boosts[TILED_MAX_ZONES];
+    int boostCount;
 
-    LevelDef def;      // ready to hand to PhysicsLoadLevel (boxes points into this struct)
+    LevelDef def;      // ready to hand to PhysicsLoadLevel (geometry points into this struct)
 } TiledLevel;
 
 // Parse + (re)load. Safe to call on an already-loaded level (hot reload):

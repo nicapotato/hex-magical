@@ -18,7 +18,7 @@ void RenderPaperBackground(void);
 void RenderPhysics(PhysicsWorld *phys);
 void RenderPhysicsDebug(PhysicsWorld *phys, const LevelDef *level);
 void RenderSketchPreview(const SketchState *sketch);
-void RenderFinishLine(Rectangle bounds);
+void RenderFinishLine(const PolyZone *zone);
 void RenderBall(Vector2 pos, float radius, float angle);
 // uiMouse is the mouse position in game-canvas coordinates (letterbox-corrected).
 // showPlayButton shows the START/STOP toggle; simulating selects its label.
@@ -29,11 +29,13 @@ Rectangle RenderGetDebugButtonRect(void);
 Rectangle RenderGetLevelMenuHeaderRect(void);
 Rectangle RenderGetLevelMenuItemRect(int index);
 
-// Level-complete menu (chlorostitch style): stats + Admire / Restart / Next / Quit.
-// Button order matches RenderGetWinMenuButtonRect indices; when hasNext is false
-// there are 3 buttons and index 2 is "Quit to title".
-void RenderWinMenu(int strokeCount, float runTime, bool hasNext, Vector2 uiMouse);
+// Level-complete menu: stats + Admire / Save / Restart / Next / Quit.
+void RenderWinMenu(int strokeCount, float runTime, bool hasNext, bool solutionSaved, Vector2 uiMouse);
 void RenderWinAdmireHint(void); // shown while the menu is hidden to admire the run
 Rectangle RenderGetWinMenuButtonRect(int index, int buttonCount);
+
+// Game-over menu (ball fell into a pit): Try again / Restart / Quit — button
+// rects come from RenderGetWinMenuButtonRect(i, 3).
+void RenderGameOverMenu(Vector2 uiMouse);
 
 #endif // RENDER_H

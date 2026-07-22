@@ -114,6 +114,44 @@ static int ChaikinPass(const Vector2 *in, int count, Vector2 *out, int maxOut)
 }
 
 //----------------------------------------------------------------------------------
+// Finalize the accumulated points into a physics body (RDP denoise + Chaikin
+// rounding) and reset accumulation. Strokes split by no-build zones call this
+// once per segment, so each side of the zone becomes its own track piece.
+//----------------------------------------------------------------------------------
+static void FinalizeSegment(SketchState *sketch, PhysicsWorld *phys)
+{
+    if (sketch->pointCount >= 2)
+    {
+        Vector2 bufA[MAX_STROKE_POINTS];
+        Vector2 bufB[MAX_STROKE_POINTS];
+        int n = SimplifyRDP(sketch->points, sketch->pointCount, RDP_EPSILON, bufA, MAX_STROKE_POINTS);
+        if (n < 2)
+        {
+            bufA[0] = sketch->points[0];
+            bufA[1] = sketch->points[sketch->pointCount - 1];
+            n = 2;
+        }
+
+        Vector2 *cur = bufA;
+        Vector2 *next = bufB;
+        for (int pass = 0; pass < CHAIKIN_PASSES; pass++)
+        {
+            // Each pass ~doubles the point count; keeping the whole stroke
+            // beats extra smoothing, so stop rather than truncate the tail
+            if (2 * n > MAX_STROKE_POINTS) break;
+            n = ChaikinPass(cur, n, next, MAX_STROKE_POINTS);
+            Vector2 *tmp = cur;
+            cur = next;
+            next = tmp;
+        }
+
+        PhysicsCreateDrawnBody(phys, cur, n, sketch->crayonColor);
+    }
+
+    sketch->pointCount = 0;
+}
+
+//----------------------------------------------------------------------------------
 // Module Functions Definition
 //----------------------------------------------------------------------------------
 void SketchInit(SketchState *sketch)
@@ -129,7 +167,7 @@ void SketchCancel(SketchState *sketch)
     sketch->pointCount = 0;
 }
 
-void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, bool lmbDown, bool lmbPressed, bool rmbPressed)
+void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, bool lmbDown, bool lmbPressed, bool rmbPressed, bool inNoBuild)
 {
     if (rmbPressed)
     {
@@ -140,25 +178,38 @@ void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, b
 
     if (lmbPressed)
     {
+        // Starting inside a no-build zone is fine — points only register once
+        // the cursor leaves the zone
         sketch->drawing = true;
         sketch->pointCount = 0;
-        sketch->points[sketch->pointCount++] = worldMouse;
+        if (!inNoBuild) sketch->points[sketch->pointCount++] = worldMouse;
         return;
     }
 
     if (sketch->drawing && lmbDown)
     {
-        if (sketch->pointCount > 0)
+        if (inNoBuild)
         {
-            Vector2 last = sketch->points[sketch->pointCount - 1];
-            float dx = worldMouse.x - last.x;
-            float dy = worldMouse.y - last.y;
-            if ((dx * dx + dy * dy) >= (SAMPLE_DIST * SAMPLE_DIST))
+            // Ink pauses inside the zone: whatever was drawn so far becomes its
+            // own track segment, and drawing resumes on the other side
+            FinalizeSegment(sketch, phys);
+            return;
+        }
+
+        if (sketch->pointCount == 0)
+        {
+            sketch->points[sketch->pointCount++] = worldMouse;
+            return;
+        }
+
+        Vector2 last = sketch->points[sketch->pointCount - 1];
+        float dx = worldMouse.x - last.x;
+        float dy = worldMouse.y - last.y;
+        if ((dx * dx + dy * dy) >= (SAMPLE_DIST * SAMPLE_DIST))
+        {
+            if (sketch->pointCount < MAX_STROKE_POINTS)
             {
-                if (sketch->pointCount < MAX_STROKE_POINTS)
-                {
-                    sketch->points[sketch->pointCount++] = worldMouse;
-                }
+                sketch->points[sketch->pointCount++] = worldMouse;
             }
         }
         return;
@@ -169,34 +220,7 @@ void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, b
         // Finalize stroke: RDP denoises the raw mouse path, then Chaikin rounds
         // the surviving corners. The smoothed polyline is the single source of
         // truth: collider, ink rendering, and saved solutions all use it.
-        if (sketch->pointCount >= 2)
-        {
-            Vector2 bufA[MAX_STROKE_POINTS];
-            Vector2 bufB[MAX_STROKE_POINTS];
-            int n = SimplifyRDP(sketch->points, sketch->pointCount, RDP_EPSILON, bufA, MAX_STROKE_POINTS);
-            if (n < 2)
-            {
-                bufA[0] = sketch->points[0];
-                bufA[1] = sketch->points[sketch->pointCount - 1];
-                n = 2;
-            }
-
-            Vector2 *cur = bufA;
-            Vector2 *next = bufB;
-            for (int pass = 0; pass < CHAIKIN_PASSES; pass++)
-            {
-                // Each pass ~doubles the point count; keeping the whole stroke
-                // beats extra smoothing, so stop rather than truncate the tail
-                if (2 * n > MAX_STROKE_POINTS) break;
-                n = ChaikinPass(cur, n, next, MAX_STROKE_POINTS);
-                Vector2 *tmp = cur;
-                cur = next;
-                next = tmp;
-            }
-
-            PhysicsCreateDrawnBody(phys, cur, n, sketch->crayonColor);
-        }
-
-        SketchCancel(sketch);
+        FinalizeSegment(sketch, phys);
+        sketch->drawing = false;
     }
 }

@@ -21,7 +21,9 @@ typedef struct SketchState
 } SketchState;
 
 void SketchInit(SketchState *sketch);
-void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, bool lmbDown, bool lmbPressed, bool rmbPressed);
+// inNoBuild: cursor currently inside a no-build zone — ink pauses there and the
+// stroke splits into separate segments on either side of the zone.
+void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, bool lmbDown, bool lmbPressed, bool rmbPressed, bool inNoBuild);
 void SketchCancel(SketchState *sketch);
 
 #endif // SKETCH_H

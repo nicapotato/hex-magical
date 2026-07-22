@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="30" height="20" tilewidth="16" tileheight="16" infinite="0" nextlayerid="5" nextobjectid="9">
  <tileset firstgid="1" source="tileset.tsx"/>
- <tileset firstgid="56" source=":/automap-tiles.tsx"/>
+ <tileset firstgid="111" source=":/automap-tiles.tsx"/>
  <layer id="1" name="prototype" width="30" height="20" visible="0">
   <data encoding="csv">
 15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,
@@ -50,12 +50,10 @@
 15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15
 </data>
  </layer>
- <group id="4" name="game">
-  <objectgroup id="3" name="coords">
-   <object id="5" name="ball-spawn" x="55.3333" y="234.667">
-    <point/>
-   </object>
-   <object id="8" name="finish-line" x="399.333" y="188.667" width="20.6667" height="98"/>
-  </objectgroup>
- </group>
+ <objectgroup id="3" name="coords">
+  <object id="5" name="ball-spawn" x="55.3333" y="234.667">
+   <point/>
+  </object>
+  <object id="8" name="finish-line" x="442" y="189.333" width="20.6667" height="98"/>
+ </objectgroup>
 </map>
