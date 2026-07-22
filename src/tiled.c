@@ -378,13 +378,19 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
         return false;
     }
 
+    // Headless (level-tests): no GL context — skip tileset art; collision boxes,
+    // spawn/goal, and LevelDef all parse from text and work without a window
     char pngPath[512];
     snprintf(pngPath, sizeof(pngPath), "%s/%s", dir, imageName);
-    Texture2D tex = LoadTexture(pngPath);
-    if (tex.id == 0)
+    Texture2D tex = { 0 };
+    if (IsWindowReady())
     {
-        TraceLog(LOG_ERROR, "TILED: failed to load tileset image %s", pngPath);
-        return false;
+        tex = LoadTexture(pngPath);
+        if (tex.id == 0)
+        {
+            TraceLog(LOG_ERROR, "TILED: failed to load tileset image %s", pngPath);
+            return false;
+        }
     }
 
     // Canvas coords for spawn/goal/no-build
@@ -400,7 +406,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     }
 
     // Commit: replace previous state
-    if (lvl->loaded) UnloadTexture(lvl->tileset);
+    if (lvl->loaded && (lvl->tileset.id != 0)) UnloadTexture(lvl->tileset);
     *lvl = tmp;
     lvl->tileset = tex;
     lvl->modTime = GetFileModTime(tmxPath);
@@ -424,7 +430,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
 
 void TiledLevelUnload(TiledLevel *lvl)
 {
-    if (lvl->loaded) UnloadTexture(lvl->tileset);
+    if (lvl->loaded && (lvl->tileset.id != 0)) UnloadTexture(lvl->tileset);
     lvl->loaded = false;
 }
 

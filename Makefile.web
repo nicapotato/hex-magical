@@ -12,6 +12,7 @@ SRC_DIR = src
 BUILD_DIR = bin/wasm
 RESOURCES_DIR = resources
 SHELL_HTML = $(SRC_DIR)/platform/shell.html
+WEB_STORAGE_JS = $(SRC_DIR)/platform/web_storage.js
 
 CC = emcc
 
@@ -19,9 +20,10 @@ CFLAGS = -Os -Wall -std=gnu17 -D_DEFAULT_SOURCE -Wno-missing-braces -Wno-unused-
 CFLAGS += -I$(SRC_DIR) -I$(RAYLIB_SRC) -I$(RAYLIB_SRC)/external
 CFLAGS += -I$(BOX2D_INC) -I$(BOX2D_SRC) -DBOX2D_DISABLE_SIMD -ffp-contract=off
 
-LDFLAGS = -L$(RAYLIB_SRC) -lraylib.web
+LDFLAGS = -L$(RAYLIB_SRC) -lraylib.web -lidbfs.js
 LDFLAGS += -s USE_GLFW=3 -s WASM=1 -s TOTAL_MEMORY=128MB -s STACK_SIZE=1MB -s FORCE_FILESYSTEM=1 -s MINIFY_HTML=0
 LDFLAGS += --preload-file $(RESOURCES_DIR)@/resources
+LDFLAGS += --pre-js $(WEB_STORAGE_JS)
 LDFLAGS += --shell-file $(SHELL_HTML)
 
 GAME_SRCS = \
@@ -32,6 +34,7 @@ GAME_SRCS = \
 	$(SRC_DIR)/sketch.c \
 	$(SRC_DIR)/render.c \
 	$(SRC_DIR)/admin.c \
+	$(SRC_DIR)/solution.c \
 	$(SRC_DIR)/tiled.c
 
 BOX2D_SRCS = \
@@ -97,7 +100,7 @@ $(RAYLIB_SRC)/libraylib.web.a: vendor-raylib
 	@echo "Building Raylib for Web..."
 	$(MAKE) -C $(RAYLIB_SRC) PLATFORM=PLATFORM_WEB RAYLIB_LIBTYPE=STATIC
 
-$(BUILD_DIR)/index.html: $(SRCS) $(SHELL_HTML) $(RAYLIB_SRC)/libraylib.web.a | $(BUILD_DIR)
+$(BUILD_DIR)/index.html: $(SRCS) $(SHELL_HTML) $(WEB_STORAGE_JS) $(RAYLIB_SRC)/libraylib.web.a | $(BUILD_DIR)
 	@echo "Building $(PROJECT_NAME) for Web..."
 	$(CC) -o $@ $(SRCS) $(CFLAGS) $(LDFLAGS)
 

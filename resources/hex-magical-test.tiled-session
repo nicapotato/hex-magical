@@ -8,14 +8,14 @@
                 3
             ],
             "expandedObjectLayers": [
-                4,
-                3
+                3,
+                4
             ],
-            "scale": 1.5,
-            "selectedLayer": 0,
+            "scale": 1,
+            "selectedLayer": 1,
             "viewCenter": {
-                "x": 161.66666666666666,
-                "y": 174.66666666666666
+                "x": 755,
+                "y": 222
             }
         },
         "rules/auto-tile-rules.tmx": {
@@ -31,13 +31,13 @@
                 4
             ],
             "expandedObjectLayers": [
-                4,
-                3
+                3,
+                4
             ],
             "scale": 1.5,
             "selectedLayer": 2,
             "viewCenter": {
-                "x": 161.66666666666666,
+                "x": 161.33333333333331,
                 "y": 194
             }
         }

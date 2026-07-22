@@ -11,6 +11,9 @@
 static const float SAMPLE_DIST = 5.0f;
 // Light simplify — keep path detail so capsule chain follows the ink
 static const float RDP_EPSILON = 2.5f;
+// Chaikin corner-cutting passes after RDP: rounds corners so the ball rolls
+// over joints instead of catching (Line Rider feel)
+static const int CHAIKIN_PASSES = 2;
 static const Color CRAYON_BLUE = { 40, 90, 200, 255 };
 
 //----------------------------------------------------------------------------------
@@ -90,6 +93,27 @@ static int SimplifyRDP(const Vector2 *in, int count, float epsilon, Vector2 *out
 }
 
 //----------------------------------------------------------------------------------
+// Chaikin corner cutting — each pass replaces every interior corner with two
+// points at 1/4 and 3/4 along its segments, converging toward a smooth curve.
+// Endpoints are preserved so the stroke starts/ends exactly where drawn.
+//----------------------------------------------------------------------------------
+static int ChaikinPass(const Vector2 *in, int count, Vector2 *out, int maxOut)
+{
+    int outCount = 0;
+    out[outCount++] = in[0];
+    for (int i = 0; i < count - 1; i++)
+    {
+        Vector2 a = in[i];
+        Vector2 b = in[i + 1];
+        if (outCount < maxOut) out[outCount++] = (Vector2){ 0.75f*a.x + 0.25f*b.x, 0.75f*a.y + 0.25f*b.y };
+        if (outCount < maxOut) out[outCount++] = (Vector2){ 0.25f*a.x + 0.75f*b.x, 0.25f*a.y + 0.75f*b.y };
+    }
+    if (outCount < maxOut) out[outCount++] = in[count - 1];
+    else out[outCount - 1] = in[count - 1];
+    return outCount;
+}
+
+//----------------------------------------------------------------------------------
 // Module Functions Definition
 //----------------------------------------------------------------------------------
 void SketchInit(SketchState *sketch)
@@ -142,19 +166,35 @@ void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, b
 
     if (sketch->drawing && !lmbDown)
     {
-        // Finalize stroke: RDP-simplify for a cleaner hull, keep enough points for crayon look
+        // Finalize stroke: RDP denoises the raw mouse path, then Chaikin rounds
+        // the surviving corners. The smoothed polyline is the single source of
+        // truth: collider, ink rendering, and saved solutions all use it.
         if (sketch->pointCount >= 2)
         {
-            Vector2 simplified[MAX_STROKE_POINTS];
-            int n = SimplifyRDP(sketch->points, sketch->pointCount, RDP_EPSILON, simplified, MAX_STROKE_POINTS);
+            Vector2 bufA[MAX_STROKE_POINTS];
+            Vector2 bufB[MAX_STROKE_POINTS];
+            int n = SimplifyRDP(sketch->points, sketch->pointCount, RDP_EPSILON, bufA, MAX_STROKE_POINTS);
             if (n < 2)
             {
-                simplified[0] = sketch->points[0];
-                simplified[1] = sketch->points[sketch->pointCount - 1];
+                bufA[0] = sketch->points[0];
+                bufA[1] = sketch->points[sketch->pointCount - 1];
                 n = 2;
             }
 
-            PhysicsCreateDrawnBody(phys, simplified, n, sketch->crayonColor);
+            Vector2 *cur = bufA;
+            Vector2 *next = bufB;
+            for (int pass = 0; pass < CHAIKIN_PASSES; pass++)
+            {
+                // Each pass ~doubles the point count; keeping the whole stroke
+                // beats extra smoothing, so stop rather than truncate the tail
+                if (2 * n > MAX_STROKE_POINTS) break;
+                n = ChaikinPass(cur, n, next, MAX_STROKE_POINTS);
+                Vector2 *tmp = cur;
+                cur = next;
+                next = tmp;
+            }
+
+            PhysicsCreateDrawnBody(phys, cur, n, sketch->crayonColor);
         }
 
         SketchCancel(sketch);

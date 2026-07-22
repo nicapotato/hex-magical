@@ -70,6 +70,7 @@ bin/
 external/
 hex-magical/
 hex-magical.zip
+hex-magical-macos.zip
 
 # Android files
 *apk*
@@ -82,6 +83,7 @@ android.*
 *.js
 !src/platform/minshell.html
 !src/platform/shell.html
+!src/platform/web_storage.js
 !Makefile.web
 
 # macOS

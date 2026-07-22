@@ -10,6 +10,7 @@
 
 #include <math.h>
 #include <stddef.h>
+#include <stdio.h>
 
 static const Color PAPER = { 245, 236, 214, 255 };
 static const Color INK_BROWN = { 90, 60, 40, 255 };
@@ -353,15 +354,16 @@ static void DrawUiButton(Rectangle btn, const char *label, bool active, bool hov
     DrawText(label, (int)btn.x + ((int)btn.width - tw) / 2, (int)btn.y + 11, 18, text);
 }
 
-void RenderHud(const char *levelName, int levelIndex, bool showWin, bool showTitle, bool showStart,
-               bool debugMode, bool levelMenuOpen, Vector2 uiMouse)
+void RenderHud(const char *levelName, int levelIndex, bool showTitle, bool showPlayButton,
+               bool simulating, bool debugMode, bool levelMenuOpen, Vector2 uiMouse)
 {
     if (showTitle)
     {
         DrawTextCentered("HEX MAGICAL", 200, 48, INK_BROWN);
-        DrawTextCentered("a crayon physics clone", 260, 22, CRAYON_BROWN);
-        DrawTextCentered("Draw under the ball, then drop it to the star", 340, 18, INK_BROWN);
-        DrawTextCentered("LMB draw   RMB erase   ENTER drop   R restart   WASD pan   +/- zoom", 380, 18, CRAYON_BROWN);
+        DrawTextCentered("a line rider crayon toy", 260, 22, CRAYON_BROWN);
+        DrawTextCentered("Draw track under the ball, then send it to the star", 340, 18, INK_BROWN);
+        DrawTextCentered("LMB draw   RMB erase   ENTER start/stop   R restart   WASD pan   +/- zoom", 380, 18, CRAYON_BROWN);
+        DrawTextCentered("1 save solution   2 load   3 delete", 410, 18, CRAYON_BROWN);
         DrawTextCentered("Press SPACE or click to play", 480, 22, BALL_RED);
         DrawFpsIndicator();
         return;
@@ -370,11 +372,18 @@ void RenderHud(const char *levelName, int levelIndex, bool showWin, bool showTit
     Rectangle debugBtn = RenderGetDebugButtonRect();
     DrawUiButton(debugBtn, "DEBUG", debugMode, CheckCollisionPointRec(uiMouse, debugBtn));
 
-    if (showStart)
+    if (showPlayButton)
     {
         Rectangle btn = RenderGetStartButtonRect();
-        DrawUiButton(btn, "START", false, CheckCollisionPointRec(uiMouse, btn));
-        DrawText("Draw a path, then START or ENTER to drop the ball", 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
+        DrawUiButton(btn, simulating ? "STOP" : "START", simulating, CheckCollisionPointRec(uiMouse, btn));
+        if (simulating)
+        {
+            DrawText("Running — STOP or ENTER to go back to drawing", 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
+        }
+        else
+        {
+            DrawText("Draw track, then START or ENTER   |   1 save solution  2 load  3 delete", 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
+        }
     }
     else
     {
@@ -387,15 +396,102 @@ void RenderHud(const char *levelName, int levelIndex, bool showWin, bool showTit
                  16, 44, 14, (Color){ 40, 100, 40, 255 });
     }
 
-    if (showWin)
-    {
-        DrawRectangle(0, 280, GameGetViewWidth(), 120, (Color){ 245, 236, 214, 200 });
-        DrawTextCentered("You did it!", 300, 40, BALL_RED);
-        DrawTextCentered("Click or SPACE for next level", 360, 20, INK_BROWN);
-    }
-
     DrawFpsIndicator();
 
     // Drawn last so the open list overlaps the play field
     DrawLevelMenu(levelName, levelIndex, levelMenuOpen, uiMouse);
+}
+
+//----------------------------------------------------------------------------------
+// Level-complete menu
+//----------------------------------------------------------------------------------
+#define WIN_MENU_W 380.0f
+#define WIN_MENU_PAD 20.0f
+#define WIN_MENU_FONT 18
+#define WIN_MENU_TITLE_FONT 32
+#define WIN_MENU_STAT_H 26.0f
+#define WIN_MENU_BTN_H 40.0f
+#define WIN_MENU_BTN_GAP 10.0f
+
+static float WinMenuPanelHeight(int buttonCount)
+{
+    return WIN_MENU_PAD * 2.0f + (float)WIN_MENU_TITLE_FONT + 16.0f
+         + WIN_MENU_STAT_H * 2.0f + 20.0f
+         + (float)buttonCount * WIN_MENU_BTN_H + (float)(buttonCount - 1) * WIN_MENU_BTN_GAP;
+}
+
+static Rectangle WinMenuPanelRect(int buttonCount)
+{
+    float h = WinMenuPanelHeight(buttonCount);
+    return (Rectangle){
+        ((float)GameGetViewWidth() - WIN_MENU_W) * 0.5f,
+        ((float)GAME_SCREEN_HEIGHT - h) * 0.5f,
+        WIN_MENU_W,
+        h
+    };
+}
+
+Rectangle RenderGetWinMenuButtonRect(int index, int buttonCount)
+{
+    Rectangle panel = WinMenuPanelRect(buttonCount);
+    float totalH = (float)buttonCount * WIN_MENU_BTN_H + (float)(buttonCount - 1) * WIN_MENU_BTN_GAP;
+    float startY = panel.y + panel.height - WIN_MENU_PAD - totalH;
+    return (Rectangle){
+        panel.x + WIN_MENU_PAD,
+        startY + (float)index * (WIN_MENU_BTN_H + WIN_MENU_BTN_GAP),
+        panel.width - WIN_MENU_PAD * 2.0f,
+        WIN_MENU_BTN_H
+    };
+}
+
+static void DrawWinMenuStat(Rectangle panel, int row, const char *label, const char *value)
+{
+    float y = panel.y + WIN_MENU_PAD + (float)WIN_MENU_TITLE_FONT + 16.0f + (float)row * WIN_MENU_STAT_H;
+    DrawText(label, (int)(panel.x + WIN_MENU_PAD), (int)y, WIN_MENU_FONT, CRAYON_BROWN);
+    int vw = MeasureText(value, WIN_MENU_FONT);
+    DrawText(value, (int)(panel.x + panel.width - WIN_MENU_PAD - (float)vw), (int)y, WIN_MENU_FONT, INK_BROWN);
+}
+
+void RenderWinMenu(int strokeCount, float runTime, bool hasNext, Vector2 uiMouse)
+{
+    // Dim the scene but keep it visible — the run continues behind the panel
+    DrawRectangle(0, 0, GameGetViewWidth(), GAME_SCREEN_HEIGHT, (Color){ 60, 45, 30, 140 });
+
+    int buttonCount = hasNext ? 4 : 3;
+    Rectangle panel = WinMenuPanelRect(buttonCount);
+    DrawRectangleRec(panel, (Color){ 245, 236, 214, 250 });
+    DrawRectangleLinesEx(panel, 3.0f, INK_BROWN);
+    DrawText("You did it!", (int)(panel.x + WIN_MENU_PAD), (int)(panel.y + WIN_MENU_PAD),
+             WIN_MENU_TITLE_FONT, BALL_RED);
+
+    char timeBuf[16];
+    int mins = (int)(runTime / 60.0f);
+    int secs = (int)runTime % 60;
+    int tenths = (int)(runTime * 10.0f) % 10;
+    snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d.%d", mins, secs, tenths);
+
+    DrawWinMenuStat(panel, 0, "Track drawn", TextFormat("%d stroke%s", strokeCount, (strokeCount == 1) ? "" : "s"));
+    DrawWinMenuStat(panel, 1, "Run time", timeBuf);
+
+    const char *labels[4];
+    labels[0] = "Admire creation";
+    labels[1] = "Restart level";
+    labels[2] = hasNext ? "Next level" : "Quit to title";
+    labels[3] = "Quit to title";
+
+    for (int i = 0; i < buttonCount; i++)
+    {
+        Rectangle btn = RenderGetWinMenuButtonRect(i, buttonCount);
+        DrawUiButton(btn, labels[i], false, CheckCollisionPointRec(uiMouse, btn));
+    }
+
+    const char *hint = "H or ESC admire   R restart   N next   Q quit to title";
+    int hw = MeasureText(hint, 14);
+    DrawText(hint, (GameGetViewWidth() - hw) / 2, (int)(panel.y + panel.height + 12), 14, PAPER);
+}
+
+void RenderWinAdmireHint(void)
+{
+    DrawTextCentered("Admiring your creation — H or ESC to reopen the menu",
+                     GAME_SCREEN_HEIGHT - 56, 16, BALL_RED);
 }
