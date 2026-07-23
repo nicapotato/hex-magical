@@ -14,10 +14,11 @@
 
 typedef enum AdminAction
 {
-    ADMIN_ACTION_NONE = 0,    // input was not over admin UI
-    ADMIN_ACTION_CONSUMED,    // admin UI handled the click/drag
-    ADMIN_ACTION_RESPAWN,     // user clicked RESPAWN — reload the level
-    ADMIN_ACTION_PICK_FOLDER  // user clicked LOAD ASSET FOLDER — open picker (desktop only)
+    ADMIN_ACTION_NONE = 0,     // input was not over admin UI
+    ADMIN_ACTION_CONSUMED,     // admin UI handled the click/drag
+    ADMIN_ACTION_RESPAWN,      // user clicked RESPAWN — reload the level
+    ADMIN_ACTION_PICK_FOLDER,  // user clicked LOAD ASSET FOLDER — open picker (desktop only)
+    ADMIN_ACTION_RESET_FOLDER  // user clicked RESET RESOURCE PATH — back to the game's original dir
 } AdminAction;
 
 bool AdminIsOpen(void);

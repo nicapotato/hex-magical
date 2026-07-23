@@ -88,6 +88,16 @@ static bool RunSolution(const char *path)
         TiledLevelUnload(&level);
         return false;
     }
+    if ((recaptured.boostCount != solution.boostCount) ||
+        (recaptured.cannonCount != solution.cannonCount))
+    {
+        printf("FAIL %s: capture round-trip lost builds (boosts %d->%d, cannons %d->%d)\n",
+               name, solution.boostCount, recaptured.boostCount,
+               solution.cannonCount, recaptured.cannonCount);
+        PhysicsShutdown(&physics);
+        TiledLevelUnload(&level);
+        return false;
+    }
     for (int s = 0; s < solution.strokeCount; s++)
     {
         for (int p = 0; p < solution.strokes[s].pointCount; p++)

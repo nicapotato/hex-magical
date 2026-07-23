@@ -60,6 +60,32 @@ typedef struct PhysicsTunables
     float dropForce;       // initial downward velocity kick applied at drop
 } PhysicsTunables;
 
+// Build-phase undo: every draw/erase/place action is recorded so Alt+Z can
+// revert it. Erased geometry is stored inline so undo can recreate it.
+#define UNDO_MAX_ACTIONS 32
+
+typedef enum UndoKind
+{
+    UNDO_NONE = 0,
+    UNDO_DRAW_STROKE,  // undo = erase the drawn slot
+    UNDO_DRAW_BOOST,   // undo = clear the boost line slot
+    UNDO_ADD_CANNON,   // undo = clear the cannon slot
+    UNDO_ERASE_STROKE, // undo = recreate the stroke from stored points
+    UNDO_ERASE_BOOST,  // undo = recreate the boost line from stored points
+    UNDO_ERASE_CANNON  // undo = re-place the cannon from stored pos/angle
+} UndoKind;
+
+typedef struct UndoAction
+{
+    UndoKind kind;
+    int slot;                          // draw/add actions: which slot to clear
+    Vector2 points[MAX_STROKE_POINTS]; // erase actions: world-space geometry to recreate
+    int pointCount;
+    Color color;    // erased stroke color
+    Vector2 pos;    // erased cannon position
+    float angleRad; // erased cannon barrel angle
+} UndoAction;
+
 typedef struct DrawnBody
 {
     bool active;
@@ -118,6 +144,12 @@ typedef struct PhysicsWorld
 
     BoostLine boostLines[MAX_BOOST_LINES];
     Cannon cannons[MAX_CANNONS];
+
+    // Build-phase undo stack (oldest dropped when full). Creation/erase calls
+    // record themselves unless undoApplying is set (reverts must not re-record).
+    UndoAction undo[UNDO_MAX_ACTIONS];
+    int undoCount;
+    bool undoApplying;
 
     // Per-level build budgets (from LevelDef; canvas px of ink / cannon slots).
     // Zero = resource disabled for this level.
@@ -185,6 +217,10 @@ float PhysicsBoostInkUsed(const PhysicsWorld *phys);
 // Checkpoint: snap to the ghost sample nearest p (within CHECKPOINT_SNAP_RADIUS).
 // A click away from the trail clears the flag. Returns true if a flag is now set.
 bool PhysicsSetCheckpointNear(PhysicsWorld *phys, Vector2 p);
+
+// Undo the most recent build action (draw/erase stroke, boost line or cannon).
+// Build phase only. Returns false when the stack is empty.
+bool PhysicsUndoLastAction(PhysicsWorld *phys);
 
 DrawnBody *PhysicsGetDrawn(PhysicsWorld *phys, int index);
 b2Transform PhysicsGetBodyTransform(b2BodyId bodyId);

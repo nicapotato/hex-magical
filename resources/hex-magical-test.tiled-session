@@ -6,8 +6,35 @@
     ],
     "file.lastUsedOpenFilter": "All Files (*)",
     "fileStates": {
+        "/Users/nicapotato/Desktop/resources/tileset.tsx": {
+            "scaleInDock": 1
+        },
         ":/automap-tiles.tsx": {
             "scaleInDock": 1
+        },
+        "map-10.tmx": {
+            "scale": 0.7659374999999999,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 480.45695634434935,
+                "y": 240.22847817217473
+            }
+        },
+        "map-11.tmx": {
+            "scale": 0.7659374999999999,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 480.45695634434935,
+                "y": 240.22847817217473
+            }
+        },
+        "map-12.tmx": {
+            "scale": 1,
+            "selectedLayer": 1,
+            "viewCenter": {
+                "x": 653,
+                "y": 304
+            }
         },
         "map-2.tmx": {
             "expandedGroupLayers": [
@@ -51,6 +78,38 @@
             "viewCenter": {
                 "x": 458.6666666666667,
                 "y": 413.33333333333337
+            }
+        },
+        "map-6.tmx": {
+            "scale": 0.7659374999999999,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 480.45695634434935,
+                "y": 240.22847817217473
+            }
+        },
+        "map-7.tmx": {
+            "scale": 0.22978125,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 1601.5231878144973,
+                "y": 639.738882088943
+            }
+        },
+        "map-8.tmx": {
+            "scale": 1,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 788,
+                "y": 408
+            }
+        },
+        "map-9.tmx": {
+            "scale": 0.7659374999999999,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 480.45695634434935,
+                "y": 240.22847817217473
             }
         },
         "map-template.tmx": {
@@ -101,6 +160,9 @@
     "recentFiles": [
         "map-4.tmx",
         "map-5.tmx",
+        "map-7.tmx",
+        "map-6.tmx",
+        "map-8.tmx",
         "map-3.tmx",
         "map-2.tmx",
         "map-template.tmx",

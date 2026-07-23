@@ -21,12 +21,12 @@
 #define ADMIN_GAP 8.0f
 #define ADMIN_PATH_FONT 10
 
-// Extra panel section for the asset-folder picker — desktop only (no native
-// dialog on web, and the web bundle ships its resources inside the .data file)
+// Extra panel section for the asset-folder picker + reset — desktop only (no
+// native dialog on web, and the web bundle ships its resources inside the .data file)
 #if defined(PLATFORM_WEB)
     #define ADMIN_FOLDER_SECTION_H 0.0f
 #else
-    #define ADMIN_FOLDER_SECTION_H (ADMIN_GAP + ADMIN_ACTION_BTN_H + 4.0f + (float)ADMIN_PATH_FONT)
+    #define ADMIN_FOLDER_SECTION_H (ADMIN_GAP + ADMIN_ACTION_BTN_H + ADMIN_GAP + ADMIN_ACTION_BTN_H + 4.0f + (float)ADMIN_PATH_FONT)
 #endif
 
 static bool adminOpen = false;
@@ -128,6 +128,18 @@ static Rectangle FolderButtonRect(const Rectangle *panel)
         ADMIN_ACTION_BTN_H
     };
 }
+
+// Full-width "RESET RESOURCE PATH" button below the folder picker
+static Rectangle ResetFolderButtonRect(const Rectangle *panel)
+{
+    Rectangle folder = FolderButtonRect(panel);
+    return (Rectangle){
+        folder.x,
+        folder.y + ADMIN_ACTION_BTN_H + ADMIN_GAP,
+        folder.width,
+        ADMIN_ACTION_BTN_H
+    };
+}
 #endif
 
 //----------------------------------------------------------------------------------
@@ -179,6 +191,10 @@ AdminAction AdminHandleInput(PhysicsWorld *phys, Vector2 mouse, bool lmbDown, bo
         if (CheckCollisionPointRec(mouse, FolderButtonRect(&panel)))
         {
             return ADMIN_ACTION_PICK_FOLDER;
+        }
+        if (CheckCollisionPointRec(mouse, ResetFolderButtonRect(&panel)))
+        {
+            return ADMIN_ACTION_RESET_FOLDER;
         }
 #endif
     }
@@ -271,6 +287,13 @@ void AdminDraw(const PhysicsWorld *phys, Vector2 mouse)
     tw = MeasureText("LOAD ASSET FOLDER...", ADMIN_FONT);
     DrawText("LOAD ASSET FOLDER...", (int)(folderBtn.x + (folderBtn.width - (float)tw) * 0.5f), (int)(folderBtn.y + 6.0f), ADMIN_FONT, PAPER_TEXT);
 
+    Rectangle resetFolderBtn = ResetFolderButtonRect(&panel);
+    bool resetFolderHover = CheckCollisionPointRec(mouse, resetFolderBtn);
+    DrawRectangleRec(resetFolderBtn, resetFolderHover ? ACCENT_RED : CRAYON);
+    DrawRectangleLinesEx(resetFolderBtn, 2.0f, INK);
+    tw = MeasureText("RESET RESOURCE PATH", ADMIN_FONT);
+    DrawText("RESET RESOURCE PATH", (int)(resetFolderBtn.x + (resetFolderBtn.width - (float)tw) * 0.5f), (int)(resetFolderBtn.y + 6.0f), ADMIN_FONT, PAPER_TEXT);
+
     // Current folder, right-trimmed so the tail (the interesting part) stays visible
     const char *dir = GameGetResourcesDir();
     int dirW = MeasureText(dir, ADMIN_PATH_FONT);
@@ -280,6 +303,6 @@ void AdminDraw(const PhysicsWorld *phys, Vector2 mouse)
         dir++;
         dirW = MeasureText(dir, ADMIN_PATH_FONT);
     }
-    DrawText(dir, (int)(panel.x + ADMIN_PAD), (int)(folderBtn.y + folderBtn.height + 4.0f), ADMIN_PATH_FONT, CRAYON);
+    DrawText(dir, (int)(panel.x + ADMIN_PAD), (int)(resetFolderBtn.y + resetFolderBtn.height + 4.0f), ADMIN_PATH_FONT, CRAYON);
 #endif
 }

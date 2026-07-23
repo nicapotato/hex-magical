@@ -39,6 +39,27 @@ void SolutionCapture(Solution *sol, const PhysicsWorld *phys, const char *levelF
             stroke->points[p] = (Vector2){ world.x, world.y };
         }
     }
+
+    // Boost lines and cannons are part of the built track — snapshot them too
+    for (int i = 0; i < MAX_BOOST_LINES; i++)
+    {
+        const BoostLine *line = &phys->boostLines[i];
+        if (!line->active) continue;
+        if (sol->boostCount >= SOLUTION_MAX_BOOSTS) break;
+
+        SolutionStroke *boost = &sol->boosts[sol->boostCount++];
+        boost->pointCount = line->pointCount;
+        for (int p = 0; p < line->pointCount; p++) boost->points[p] = line->points[p];
+    }
+
+    for (int i = 0; i < MAX_CANNONS; i++)
+    {
+        const Cannon *cannon = &phys->cannons[i];
+        if (!cannon->active) continue;
+        if (sol->cannonCount >= SOLUTION_MAX_CANNONS) break;
+
+        sol->cannons[sol->cannonCount++] = (SolutionCannon){ cannon->pos, cannon->angleRad };
+    }
 }
 
 bool SolutionSave(const Solution *sol, const char *path)
@@ -64,6 +85,23 @@ bool SolutionSave(const Solution *sol, const char *path)
             fprintf(f, " %.4f,%.4f", stroke->points[p].x, stroke->points[p].y);
         }
         fprintf(f, "\n");
+    }
+
+    for (int i = 0; i < sol->boostCount; i++)
+    {
+        const SolutionStroke *boost = &sol->boosts[i];
+        fprintf(f, "boost");
+        for (int p = 0; p < boost->pointCount; p++)
+        {
+            fprintf(f, " %.4f,%.4f", boost->points[p].x, boost->points[p].y);
+        }
+        fprintf(f, "\n");
+    }
+
+    for (int i = 0; i < sol->cannonCount; i++)
+    {
+        fprintf(f, "cannon %.4f,%.4f %.6f\n",
+                sol->cannons[i].pos.x, sol->cannons[i].pos.y, sol->cannons[i].angleRad);
     }
 
     fclose(f);
@@ -172,6 +210,41 @@ bool SolutionLoad(Solution *sol, const char *path)
             }
             sol->strokeCount++;
         }
+        else if (strncmp(start, "boost", 5) == 0)
+        {
+            if (sol->boostCount >= SOLUTION_MAX_BOOSTS)
+            {
+                fprintf(stderr, "SOLUTION: %s:%d too many boost lines (max %d)\n",
+                        path, lineNo, SOLUTION_MAX_BOOSTS);
+                fclose(f);
+                return false;
+            }
+            if (!ParseStrokeLine(start + 5, &sol->boosts[sol->boostCount]))
+            {
+                fprintf(stderr, "SOLUTION: %s:%d malformed boost line\n", path, lineNo);
+                fclose(f);
+                return false;
+            }
+            sol->boostCount++;
+        }
+        else if (strncmp(start, "cannon ", 7) == 0)
+        {
+            if (sol->cannonCount >= SOLUTION_MAX_CANNONS)
+            {
+                fprintf(stderr, "SOLUTION: %s:%d too many cannons (max %d)\n",
+                        path, lineNo, SOLUTION_MAX_CANNONS);
+                fclose(f);
+                return false;
+            }
+            SolutionCannon *cannon = &sol->cannons[sol->cannonCount];
+            if (sscanf(start + 7, "%f,%f %f", &cannon->pos.x, &cannon->pos.y, &cannon->angleRad) != 3)
+            {
+                fprintf(stderr, "SOLUTION: %s:%d malformed cannon line\n", path, lineNo);
+                fclose(f);
+                return false;
+            }
+            sol->cannonCount++;
+        }
         else
         {
             fprintf(stderr, "SOLUTION: %s:%d unknown directive: %s", path, lineNo, start);
@@ -200,6 +273,23 @@ void SolutionApply(const Solution *sol, PhysicsWorld *phys)
         if (slot < 0)
         {
             fprintf(stderr, "SOLUTION: failed to recreate stroke %d/%d\n", i + 1, sol->strokeCount);
+        }
+    }
+
+    for (int i = 0; i < sol->boostCount; i++)
+    {
+        const SolutionStroke *boost = &sol->boosts[i];
+        if (PhysicsCreateBoostLine(phys, boost->points, boost->pointCount) < 0)
+        {
+            fprintf(stderr, "SOLUTION: failed to recreate boost line %d/%d\n", i + 1, sol->boostCount);
+        }
+    }
+
+    for (int i = 0; i < sol->cannonCount; i++)
+    {
+        if (PhysicsAddCannon(phys, sol->cannons[i].pos, sol->cannons[i].angleRad) < 0)
+        {
+            fprintf(stderr, "SOLUTION: failed to recreate cannon %d/%d\n", i + 1, sol->cannonCount);
         }
     }
 }
