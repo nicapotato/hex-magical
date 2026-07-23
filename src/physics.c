@@ -45,7 +45,7 @@ static void ClearDrawn(PhysicsWorld *phys)
     phys->drawnCount = 0;
 }
 
-// Boost lines, cannons, ghost trail and checkpoint all reset with the level
+// Boost lines, cannons, ghost trail, checkpoint and undo all reset with the level
 static void ClearBuildExtras(PhysicsWorld *phys)
 {
     memset(phys->boostLines, 0, sizeof(phys->boostLines));
@@ -54,6 +54,26 @@ static void ClearBuildExtras(PhysicsWorld *phys)
     phys->trailStepCounter = 0;
     phys->ghostCount = 0;
     phys->checkpointSet = false;
+    phys->undoCount = 0;
+    phys->undoApplying = false;
+}
+
+// Reserve the next undo slot (oldest action dropped when the stack is full).
+// Returns NULL while PhysicsUndoLastAction runs so reverts don't re-record.
+static UndoAction *PushUndo(PhysicsWorld *phys, UndoKind kind)
+{
+    if (phys->undoApplying) return NULL;
+
+    if (phys->undoCount >= UNDO_MAX_ACTIONS)
+    {
+        memmove(&phys->undo[0], &phys->undo[1], (UNDO_MAX_ACTIONS - 1) * sizeof(UndoAction));
+        phys->undoCount = UNDO_MAX_ACTIONS - 1;
+    }
+
+    UndoAction *action = &phys->undo[phys->undoCount++];
+    memset(action, 0, sizeof(*action));
+    action->kind = kind;
+    return action;
 }
 
 // Distance from p to segment ab, plus the segment's unit tangent
@@ -586,6 +606,10 @@ int PhysicsCreateDrawnBody(PhysicsWorld *phys, const Vector2 *worldPoints, int c
     b2Body_SetUserData(bodyId, (void *)(intptr_t)(slot + 1));
 
     if (slot >= phys->drawnCount) phys->drawnCount = slot + 1;
+
+    UndoAction *undo = PushUndo(phys, UNDO_DRAW_STROKE);
+    if (undo) undo->slot = slot;
+
     return slot;
 }
 
@@ -639,6 +663,21 @@ bool PhysicsEraseAtPoint(PhysicsWorld *phys, Vector2 worldPoint)
     if ((slot < 0) || (slot >= MAX_DRAWN_BODIES)) return false;
     if (!phys->drawn[slot].active) return false;
 
+    // Record the erased geometry (world space) so undo can redraw it
+    UndoAction *undo = PushUndo(phys, UNDO_ERASE_STROKE);
+    if (undo)
+    {
+        const DrawnBody *drawn = &phys->drawn[slot];
+        b2Transform xf = b2Body_GetTransform(drawn->bodyId);
+        undo->pointCount = drawn->pointCount;
+        undo->color = drawn->crayonColor;
+        for (int p = 0; p < drawn->pointCount; p++)
+        {
+            b2Vec2 world = b2TransformPoint(xf, ToB2(drawn->localPoints[p]));
+            undo->points[p] = FromB2(world);
+        }
+    }
+
     b2DestroyBody(query.hitBody);
     phys->drawn[slot].active = false;
     phys->drawn[slot].bodyId = b2_nullBodyId;
@@ -661,6 +700,10 @@ int PhysicsCreateBoostLine(PhysicsWorld *phys, const Vector2 *worldPoints, int c
         line->active = true;
         line->pointCount = (count < MAX_STROKE_POINTS) ? count : MAX_STROKE_POINTS;
         for (int p = 0; p < line->pointCount; p++) line->points[p] = worldPoints[p];
+
+        UndoAction *undo = PushUndo(phys, UNDO_DRAW_BOOST);
+        if (undo) undo->slot = i;
+
         return i;
     }
 
@@ -681,6 +724,13 @@ bool PhysicsEraseBoostLineAt(PhysicsWorld *phys, Vector2 worldPoint)
             Vector2 tangent = { 0 };
             if (PointSegmentDist(worldPoint, line->points[p], line->points[p + 1], &tangent) <= pad)
             {
+                UndoAction *undo = PushUndo(phys, UNDO_ERASE_BOOST);
+                if (undo)
+                {
+                    undo->pointCount = line->pointCount;
+                    for (int q = 0; q < line->pointCount; q++) undo->points[q] = line->points[q];
+                }
+
                 line->active = false;
                 line->pointCount = 0;
                 return true;
@@ -703,6 +753,10 @@ int PhysicsAddCannon(PhysicsWorld *phys, Vector2 pos, float angleRad)
         cannon->pos = pos;
         cannon->angleRad = angleRad;
         cannon->cooldown = 0.0f;
+
+        UndoAction *undo = PushUndo(phys, UNDO_ADD_CANNON);
+        if (undo) undo->slot = i;
+
         return i;
     }
     return -1;
@@ -719,6 +773,13 @@ bool PhysicsEraseCannonAt(PhysicsWorld *phys, Vector2 worldPoint)
         float dy = worldPoint.y - cannon->pos.y;
         if ((dx * dx + dy * dy) <= (CANNON_ENTRY_RADIUS * CANNON_ENTRY_RADIUS))
         {
+            UndoAction *undo = PushUndo(phys, UNDO_ERASE_CANNON);
+            if (undo)
+            {
+                undo->pos = cannon->pos;
+                undo->angleRad = cannon->angleRad;
+            }
+
             cannon->active = false;
             return true;
         }
@@ -734,6 +795,57 @@ int PhysicsActiveCannonCount(const PhysicsWorld *phys)
         if (phys->cannons[i].active) count++;
     }
     return count;
+}
+
+//----------------------------------------------------------------------------------
+// Undo — pop the last recorded build action and revert it
+//----------------------------------------------------------------------------------
+bool PhysicsUndoLastAction(PhysicsWorld *phys)
+{
+    if (!phys->valid || (phys->undoCount <= 0)) return false;
+
+    UndoAction *action = &phys->undo[--phys->undoCount];
+    phys->undoApplying = true; // reverts below must not push new undo entries
+
+    switch (action->kind)
+    {
+        case UNDO_DRAW_STROKE:
+        {
+            DrawnBody *drawn = &phys->drawn[action->slot];
+            if (drawn->active)
+            {
+                b2DestroyBody(drawn->bodyId);
+                drawn->active = false;
+                drawn->bodyId = b2_nullBodyId;
+                drawn->pointCount = 0;
+            }
+        } break;
+        case UNDO_DRAW_BOOST:
+        {
+            phys->boostLines[action->slot].active = false;
+            phys->boostLines[action->slot].pointCount = 0;
+        } break;
+        case UNDO_ADD_CANNON:
+        {
+            phys->cannons[action->slot].active = false;
+        } break;
+        case UNDO_ERASE_STROKE:
+        {
+            PhysicsCreateDrawnBody(phys, action->points, action->pointCount, action->color);
+        } break;
+        case UNDO_ERASE_BOOST:
+        {
+            PhysicsCreateBoostLine(phys, action->points, action->pointCount);
+        } break;
+        case UNDO_ERASE_CANNON:
+        {
+            PhysicsAddCannon(phys, action->pos, action->angleRad);
+        } break;
+        default: break;
+    }
+
+    phys->undoApplying = false;
+    return true;
 }
 
 //----------------------------------------------------------------------------------

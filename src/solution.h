@@ -8,11 +8,13 @@
 *
 *   Text format (resources/solutions/<level>.solution), diffable and hand-editable:
 *
-*       version 1
+*       version 2
 *       level map-2.tmx
 *       tunables density=2.5 restitution=0.25 dropforce=0.0
 *       stroke 142.0,310.5 198.2,300.1 240.7,315.9
 *       stroke 300.0,400.0 350.0,390.0
+*       boost 120.0,500.0 180.0,470.0
+*       cannon 420.0,610.0 -1.5708
 *
 ********************************************************************************************/
 
@@ -24,8 +26,10 @@
 
 #include <stdbool.h>
 
-#define SOLUTION_VERSION 1
+#define SOLUTION_VERSION 2
 #define SOLUTION_MAX_STROKES MAX_DRAWN_BODIES
+#define SOLUTION_MAX_BOOSTS MAX_BOOST_LINES
+#define SOLUTION_MAX_CANNONS MAX_CANNONS
 
 typedef struct SolutionStroke
 {
@@ -33,12 +37,22 @@ typedef struct SolutionStroke
     int pointCount;
 } SolutionStroke;
 
+typedef struct SolutionCannon
+{
+    Vector2 pos;
+    float angleRad;
+} SolutionCannon;
+
 typedef struct Solution
 {
     char levelFile[256];      // .tmx basename — the stable level identity
     PhysicsTunables tunables; // physics knobs active when the solution was made
     SolutionStroke strokes[SOLUTION_MAX_STROKES];
     int strokeCount;
+    SolutionStroke boosts[SOLUTION_MAX_BOOSTS]; // boost line placements
+    int boostCount;
+    SolutionCannon cannons[SOLUTION_MAX_CANNONS];
+    int cannonCount;
 } Solution;
 
 // Snapshot the currently drawn strokes (world space) and active tunables

@@ -21,6 +21,7 @@ typedef enum BuildTool
     TOOL_BOOST_LINE,  // directional boost stroke (boost_line-capacity budget)
     TOOL_CANNON,      // press-drag-aim cannon placement (cannon-count budget)
     TOOL_FLAG,        // checkpoint flag on the ghost trail
+    TOOL_ERASER,      // erase mode: LMB (click or drag) removes builds under the cursor
     TOOL_COUNT
 } BuildTool;
 

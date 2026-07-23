@@ -279,15 +279,21 @@ static void UpdateCannonTool(SketchState *sketch, PhysicsWorld *phys, Vector2 wo
     }
 }
 
+// Erase whatever build sits under the cursor: crayon stroke, boost line or cannon
+static void EraseAt(PhysicsWorld *phys, Vector2 worldMouse)
+{
+    if (!PhysicsEraseAtPoint(phys, worldMouse))
+    {
+        if (!PhysicsEraseBoostLineAt(phys, worldMouse)) PhysicsEraseCannonAt(phys, worldMouse);
+    }
+}
+
 void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, bool lmbDown, bool lmbPressed, bool rmbPressed, bool inNoBuild)
 {
     if (rmbPressed)
     {
-        // RMB erases whatever build sits under the cursor, regardless of tool
-        if (!PhysicsEraseAtPoint(phys, worldMouse))
-        {
-            if (!PhysicsEraseBoostLineAt(phys, worldMouse)) PhysicsEraseCannonAt(phys, worldMouse);
-        }
+        // RMB erases regardless of the selected tool (quick spot-erase)
+        EraseAt(phys, worldMouse);
         SketchCancel(sketch);
         return;
     }
@@ -307,6 +313,11 @@ void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, b
         {
             // Click near the ghost trail plants the flag; clicking away clears it
             if (lmbPressed) PhysicsSetCheckpointNear(phys, worldMouse);
+        } break;
+        case TOOL_ERASER:
+        {
+            // Erase mode: hold LMB and sweep — anything under the cursor goes
+            if (lmbDown) EraseAt(phys, worldMouse);
         } break;
         default: break;
     }

@@ -523,7 +523,7 @@ void RenderHud(const char *levelName, int levelIndex, bool showTitle, bool showP
         DrawTextCentered("a line rider crayon toy", 260, 22, CRAYON_BROWN);
         DrawTextCentered("Draw track under the ball, then send it to the star", 340, 18, INK_BROWN);
         DrawTextCentered("LMB draw   RMB erase   SPACE start/stop   R restart   WASD pan   +/- zoom", 380, 18, CRAYON_BROWN);
-        DrawTextCentered("Z/X/C/V tools   1 save solution   2 load   3 delete", 410, 18, CRAYON_BROWN);
+        DrawTextCentered("Z/X/C/V/E tools   ALT+Z undo   1 save solution   2 load   3 delete", 410, 18, CRAYON_BROWN);
         DrawTextCentered("Press SPACE or click to play", 480, 22, BALL_RED);
         DrawFpsIndicator();
         return;
@@ -543,7 +543,7 @@ void RenderHud(const char *levelName, int levelIndex, bool showTitle, bool showP
         }
         else
         {
-            DrawText("Build, then START or SPACE   |   RMB erase   1 save  2 load  3 delete", 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
+            DrawText("Build, then START or SPACE   |   RMB erase   ALT+Z undo   1 save  2 load  3 delete", 16, GAME_SCREEN_HEIGHT - 28, 16, CRAYON_BROWN);
         }
     }
     else
@@ -566,9 +566,10 @@ void RenderHud(const char *levelName, int levelIndex, bool showTitle, bool showP
 //----------------------------------------------------------------------------------
 // Build tool bar
 //----------------------------------------------------------------------------------
-#define TOOL_CHIP_W 150.0f
+// 5 chips (crayon/boost/cannon/flag/eraser) must fit the 720px base view width
+#define TOOL_CHIP_W 132.0f
 #define TOOL_CHIP_H 48.0f
-#define TOOL_CHIP_GAP 8.0f
+#define TOOL_CHIP_GAP 6.0f
 #define TOOL_BAR_X 16.0f
 // Sits just above the bottom hint line
 #define TOOL_BAR_Y ((float)GAME_SCREEN_HEIGHT - 28.0f - 14.0f - TOOL_CHIP_H)
@@ -586,7 +587,7 @@ Rectangle RenderGetToolButtonRect(int slot)
 void RenderToolBar(const PhysicsWorld *phys, const BuildTool *tools, int toolCount,
                    BuildTool currentTool, Vector2 uiMouse)
 {
-    static const char *toolLabels[TOOL_COUNT] = { "Z CRAYON", "X BOOST", "C CANNON", "V FLAG" };
+    static const char *toolLabels[TOOL_COUNT] = { "Z CRAYON", "X BOOST", "C CANNON", "V FLAG", "E ERASE" };
 
     for (int slot = 0; slot < toolCount; slot++)
     {
@@ -633,6 +634,10 @@ void RenderToolBar(const PhysicsWorld *phys, const BuildTool *tools, int toolCou
                                : (phys->ghostCount >= 2) ? "click the ghost trail"
                                : "run once to get a trail";
             DrawText(status, (int)chip.x + 8, (int)chip.y + 28, 13, text);
+        }
+        else if (tool == TOOL_ERASER)
+        {
+            DrawText("hold LMB and sweep", (int)chip.x + 8, (int)chip.y + 28, 13, text);
         }
     }
 }

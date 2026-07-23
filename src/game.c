@@ -16,6 +16,7 @@
 
 #include "raylib.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -45,14 +46,16 @@ static Vector2 viewPan = { 0.0f, 0.0f }; // camera target offset from level cent
 #define VIEW_ZOOM_RATE 1.5f // exponential zoom speed per second while +/- held
 #define VIEW_PAN_SPEED 480.0f // world pixels per second at 1x zoom
 
-#define MAX_TILED_LEVELS 8
+#define MAX_TILED_LEVELS 30
 static TiledLevel tiledLevels[MAX_TILED_LEVELS] = { 0 };
 static int tiledLevelCount = 0;
 static float tiledWatchTimer = 0.0f;
 
 // Which resources dir the shipped levels came from
 static char resourcesDir[256] = "resources";
-// Shared scratch (the struct is ~130 KB — keep it off the stack)
+// The dir GameInit resolved at startup — "RESET RESOURCE PATH" returns here
+static char defaultResourcesDir[256] = "resources";
+// Shared scratch (the struct is ~165 KB — keep it off the stack)
 static Solution solutionScratch = { 0 };
 
 //----------------------------------------------------------------------------------
@@ -80,7 +83,29 @@ const char *GameGetLevelName(int index)
     return GetLevelDef(index)->name;
 }
 
-// Scan a resources dir for .tmx maps, sorted by filename for a stable level order
+// Natural filename compare: digit runs compare as numbers, so map-2 < map-10.
+// Plain strcmp would order map-10/map-11/map-12 before map-2.
+static int NaturalCompare(const char *a, const char *b)
+{
+    while (*a && *b)
+    {
+        if (isdigit((unsigned char)*a) && isdigit((unsigned char)*b))
+        {
+            long numA = strtol(a, (char **)&a, 10);
+            long numB = strtol(b, (char **)&b, 10);
+            if (numA != numB) return (numA < numB) ? -1 : 1;
+        }
+        else
+        {
+            if (*a != *b) return (unsigned char)*a - (unsigned char)*b;
+            a++;
+            b++;
+        }
+    }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+// Scan a resources dir for .tmx maps, sorted numerically for a stable level order
 static void LoadTiledLevels(const char *dir)
 {
     if (!DirectoryExists(dir)) return;
@@ -92,7 +117,7 @@ static void LoadTiledLevels(const char *dir)
     {
         char *key = files.paths[i];
         int j = (int)i - 1;
-        while ((j >= 0) && (strcmp(files.paths[j], key) > 0))
+        while ((j >= 0) && (NaturalCompare(files.paths[j], key) > 0))
         {
             files.paths[j + 1] = files.paths[j];
             j--;
@@ -170,7 +195,7 @@ static Vector2 GetViewMouse(void)
 }
 
 // Tools available on the current level: zero-capacity TMX resources are hidden
-// from the HUD and unselectable. The checkpoint flag is always free.
+// from the HUD and unselectable. The checkpoint flag and eraser are always free.
 static int GetVisibleTools(BuildTool tools[TOOL_COUNT])
 {
     const LevelDef *level = GetLevelDef(levelIndex);
@@ -179,6 +204,7 @@ static int GetVisibleTools(BuildTool tools[TOOL_COUNT])
     if (level->boostLineCapacity > 0.0f) tools[count++] = TOOL_BOOST_LINE;
     if (level->cannonCount > 0) tools[count++] = TOOL_CANNON;
     tools[count++] = TOOL_FLAG;
+    tools[count++] = TOOL_ERASER;
     return count;
 }
 
@@ -252,7 +278,9 @@ static bool SaveCurrentSolution(void)
     const char *path = GetCurrentSolutionPath();
     if (SolutionSave(&solutionScratch, path))
     {
-        fprintf(stderr, "SOLUTION: saved %d strokes to %s\n", solutionScratch.strokeCount, path);
+        fprintf(stderr, "SOLUTION: saved %d strokes, %d boosts, %d cannons to %s\n",
+                solutionScratch.strokeCount, solutionScratch.boostCount,
+                solutionScratch.cannonCount, path);
         PlatformSyncFiles();
         return true;
     }
@@ -278,7 +306,9 @@ static void RestoreCurrentSolution(void)
     physics.tunables = solutionScratch.tunables; // ball is rebuilt with the recorded knobs
     LoadCurrentLevel();
     SolutionApply(&solutionScratch, &physics);
-    fprintf(stderr, "SOLUTION: restored %d strokes from %s\n", solutionScratch.strokeCount, path);
+    fprintf(stderr, "SOLUTION: restored %d strokes, %d boosts, %d cannons from %s\n",
+            solutionScratch.strokeCount, solutionScratch.boostCount,
+            solutionScratch.cannonCount, path);
 }
 
 // F8: delete the saved solution for the current level
@@ -486,6 +516,10 @@ void GameInit(void)
         abort();
     }
 
+    // Whatever dir won the search above is the game's original path —
+    // the admin "RESET RESOURCE PATH" button restores it
+    snprintf(defaultResourcesDir, sizeof(defaultResourcesDir), "%s", resourcesDir);
+
     // ESC is used by the win menu (admire toggle) — don't let raylib treat it as quit
     SetExitKey(KEY_NULL);
 
@@ -610,6 +644,14 @@ void GameUpdateDrawFrame(void)
                     GameSetResourcesDir(picked);
                 }
             }
+            else if (adminAction == ADMIN_ACTION_RESET_FOLDER)
+            {
+                // Back to the dir resolved at startup (no-op if already there)
+                if (strcmp(resourcesDir, defaultResourcesDir) != 0)
+                {
+                    GameSetResourcesDir(defaultResourcesDir);
+                }
+            }
             if (adminAction != ADMIN_ACTION_NONE)
             {
                 lmbPressed = false;
@@ -681,11 +723,23 @@ void GameUpdateDrawFrame(void)
     }
     else if (screen == SCREEN_PLAYING)
     {
+        // Alt+Z reverts the last build action (draw/erase/place); plain Z is a tool key
+        bool altDown = IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT);
+        if (IsKeyPressed(KEY_Z) && altDown)
+        {
+            if (!PhysicsIsSimulating(&physics))
+            {
+                SketchCancel(&sketch);
+                PhysicsUndoLastAction(&physics);
+            }
+        }
+
         // Tool hotkeys — only tools the level offers can be selected
-        if (IsKeyPressed(KEY_Z)) TrySelectTool(TOOL_CRAYON);
+        if (IsKeyPressed(KEY_Z) && !altDown) TrySelectTool(TOOL_CRAYON);
         if (IsKeyPressed(KEY_X)) TrySelectTool(TOOL_BOOST_LINE);
         if (IsKeyPressed(KEY_C)) TrySelectTool(TOOL_CANNON);
         if (IsKeyPressed(KEY_V)) TrySelectTool(TOOL_FLAG);
+        if (IsKeyPressed(KEY_E)) TrySelectTool(TOOL_ERASER);
 
         // Tool bar clicks (build phase) — consumed so they never draw ink
         if (lmbPressed && !PhysicsIsSimulating(&physics))
