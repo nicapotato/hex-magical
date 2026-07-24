@@ -138,6 +138,8 @@ typedef struct PhysicsWorld
     int pitCount;
     const PolyZone *boosts; // ball inside gets a speed boost each step
     int boostCount;
+    const GravityZone *antiGravity; // ball inside rotates world gravity
+    int antiGravityCount;
 
     DrawnBody drawn[MAX_DRAWN_BODIES];
     int drawnCount;

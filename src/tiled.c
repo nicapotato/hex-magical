@@ -11,6 +11,7 @@
 #include "tiled.h"
 #include "game.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -163,6 +164,16 @@ static bool ParsePointObject(const char *xml, const char *objectName, Vector2 *o
 }
 
 // Parse every object with the given name (polygon or rect) into zones (map coords)
+// End of an <object> element. Nested self-closing tags (e.g. <property .../>)
+// must not be mistaken for the object terminator.
+static const char *ObjectEnd(const char *obj)
+{
+    const char *openEnd = strchr(obj, '>');
+    if (openEnd == NULL) return NULL;
+    if ((openEnd > obj) && (*(openEnd - 1) == '/')) return openEnd; // <object .../>
+    return strstr(openEnd, "</object>");
+}
+
 static int ParseZones(const char *xml, const char *objectName, PolyZone *zones, int maxZones)
 {
     char needle[64];
@@ -196,9 +207,7 @@ static int ParseZones(const char *xml, const char *objectName, PolyZone *zones, 
         PolyZone *zone = &zones[zoneCount];
         zone->pointCount = 0;
 
-        const char *objEnd = strstr(obj, "</object>");
-        const char *selfClose = strstr(obj, "/>");
-        if ((objEnd == NULL) || ((selfClose != NULL) && (selfClose < objEnd))) objEnd = selfClose;
+        const char *objEnd = ObjectEnd(obj);
 
         const char *poly = strstr(obj, "<polygon points=\"");
         if ((poly != NULL) && (objEnd != NULL) && (poly < objEnd))
@@ -241,6 +250,115 @@ static int ParseZones(const char *xml, const char *objectName, PolyZone *zones, 
     return zoneCount;
 }
 
+// Read a float custom property scoped to one object (fail if missing).
+static bool ParseObjectPropertyFloat(const char *obj, const char *objEnd,
+                                     const char *propName, float *out)
+{
+    char needle[96];
+    snprintf(needle, sizeof(needle), "<property name=\"%s\"", propName);
+    const char *tag = strstr(obj, needle);
+    if ((tag == NULL) || ((objEnd != NULL) && (tag >= objEnd)))
+    {
+        TraceLog(LOG_ERROR, "TILED: object missing required custom property \"%s\"", propName);
+        return false;
+    }
+    if (!ParseFloatAttr(tag, " value=\"", out))
+    {
+        TraceLog(LOG_ERROR, "TILED: custom property \"%s\" has no value attribute", propName);
+        return false;
+    }
+    return true;
+}
+
+// anti-gravity zones require a polygon/rect plus gravity-angle (degrees clockwise).
+static int ParseGravityZones(const char *xml, GravityZone *zones, int maxZones)
+{
+    const char *objectName = "anti-gravity";
+    char needle[64];
+    snprintf(needle, sizeof(needle), "name=\"%s\"", objectName);
+
+    int zoneCount = 0;
+    const char *cursor = xml;
+
+    while (true)
+    {
+        const char *match = strstr(cursor, needle);
+        if (match == NULL) break;
+        cursor = match + 1;
+
+        if (zoneCount >= maxZones)
+        {
+            TraceLog(LOG_ERROR, "TILED: more than %d \"%s\" objects", maxZones, objectName);
+            return -1;
+        }
+
+        const char *obj = match;
+        while ((obj > xml) && (*obj != '<')) obj--;
+
+        float ox = 0.0f, oy = 0.0f;
+        if (!ParseFloatAttr(obj, " x=\"", &ox) || !ParseFloatAttr(obj, " y=\"", &oy))
+        {
+            TraceLog(LOG_ERROR, "TILED: \"%s\" object missing x/y", objectName);
+            return -1;
+        }
+
+        const char *objEnd = ObjectEnd(obj);
+        if (objEnd == NULL)
+        {
+            TraceLog(LOG_ERROR, "TILED: \"%s\" object is not closed", objectName);
+            return -1;
+        }
+
+        GravityZone *zone = &zones[zoneCount];
+        memset(zone, 0, sizeof(*zone));
+        if (!ParseObjectPropertyFloat(obj, objEnd, "gravity-angle", &zone->gravityAngleDeg))
+        {
+            return -1;
+        }
+
+        const char *poly = strstr(obj, "<polygon points=\"");
+        if ((poly != NULL) && (poly < objEnd))
+        {
+            poly += strlen("<polygon points=\"");
+            const char *q = strchr(poly, '"');
+            while ((poly < q) && (zone->zone.pointCount < POLY_ZONE_MAX_POINTS))
+            {
+                char *next = NULL;
+                float px = strtof(poly, &next);
+                if ((next == poly) || (*next != ',')) break;
+                poly = next + 1;
+                float py = strtof(poly, &next);
+                if (next == poly) break;
+                poly = next;
+                zone->zone.points[zone->zone.pointCount++] = (Vector2){ ox + px, oy + py };
+            }
+        }
+        else
+        {
+            float w = 0.0f, h = 0.0f;
+            if (!ParseFloatAttr(obj, " width=\"", &w) || !ParseFloatAttr(obj, " height=\"", &h))
+            {
+                TraceLog(LOG_ERROR, "TILED: \"%s\" object has neither polygon nor width/height", objectName);
+                return -1;
+            }
+            zone->zone.points[0] = (Vector2){ ox, oy };
+            zone->zone.points[1] = (Vector2){ ox + w, oy };
+            zone->zone.points[2] = (Vector2){ ox + w, oy + h };
+            zone->zone.points[3] = (Vector2){ ox, oy + h };
+            zone->zone.pointCount = 4;
+        }
+
+        if (zone->zone.pointCount < 3)
+        {
+            TraceLog(LOG_ERROR, "TILED: \"%s\" polygon needs >= 3 points", objectName);
+            return -1;
+        }
+        zoneCount++;
+    }
+
+    return zoneCount;
+}
+
 // Map coords -> game canvas coords for authored zones
 static void MapZonesToCanvas(PolyZone *zones, int count, float scale, Vector2 offset)
 {
@@ -251,6 +369,14 @@ static void MapZonesToCanvas(PolyZone *zones, int count, float scale, Vector2 of
             zones[z].points[i].x = offset.x + zones[z].points[i].x * scale;
             zones[z].points[i].y = offset.y + zones[z].points[i].y * scale;
         }
+    }
+}
+
+static void MapGravityZonesToCanvas(GravityZone *zones, int count, float scale, Vector2 offset)
+{
+    for (int z = 0; z < count; z++)
+    {
+        MapZonesToCanvas(&zones[z].zone, 1, scale, offset);
     }
 }
 
@@ -388,6 +514,9 @@ static bool IsFullTileCollision(const TileCollision *collision, float tileWidth,
 //----------------------------------------------------------------------------------
 // Collision: greedy-merge solid tiles into rectangles
 //----------------------------------------------------------------------------------
+static bool ResolveGid(const TiledTileset *tilesets, int tilesetCount, int gid,
+                       int *outTsIndex, int *outLocalId);
+
 static int MergeSolidTiles(const bool *solid, int w, int h,
                            StaticBox *boxes, int maxBoxes,
                            float tileW, float tileH, float scale, Vector2 offset)
@@ -442,7 +571,8 @@ static int MergeSolidTiles(const bool *solid, int w, int h,
 }
 
 static int BuildCustomTilePolygons(const int *gids, int w, int h,
-                                   const TileCollision *collisions, int collisionCount,
+                                   const TiledTileset *tilesets, int tilesetCount,
+                                   TileCollision (*collisions)[TILED_MAX_TILE_TYPES],
                                    StaticPolygon *polygons, int maxPolygons,
                                    float tileW, float tileH, float scale, Vector2 offset)
 {
@@ -452,10 +582,11 @@ static int BuildCustomTilePolygons(const int *gids, int w, int h,
         for (int x = 0; x < w; x++)
         {
             int gid = gids[y * w + x];
-            int tileId = gid - 1; // the project tileset is firstgid=1
-            if ((tileId < 0) || (tileId >= collisionCount)) continue;
+            int tsIndex = -1;
+            int tileId = -1;
+            if (!ResolveGid(tilesets, tilesetCount, gid, &tsIndex, &tileId)) continue;
 
-            const TileCollision *collision = &collisions[tileId];
+            const TileCollision *collision = &collisions[tsIndex][tileId];
             if (IsFullTileCollision(collision, tileW, tileH)) continue;
 
             for (int s = 0; s < collision->shapeCount; s++)
@@ -480,6 +611,262 @@ static int BuildCustomTilePolygons(const int *gids, int w, int h,
         }
     }
     return polygonCount;
+}
+
+//----------------------------------------------------------------------------------
+// Tileset refs + tile animations
+//----------------------------------------------------------------------------------
+static bool ResolveGid(const TiledTileset *tilesets, int tilesetCount, int gid,
+                       int *outTsIndex, int *outLocalId)
+{
+    if (gid <= 0) return false;
+    for (int i = 0; i < tilesetCount; i++)
+    {
+        int localId = gid - tilesets[i].firstGid;
+        if ((localId >= 0) && (localId < tilesets[i].tileCount))
+        {
+            *outTsIndex = i;
+            *outLocalId = localId;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool ParseTilesetAnimations(const char *tsx, TiledTileset *tileset)
+{
+    tileset->animCount = 0;
+    const char *cursor = tsx;
+
+    while ((cursor = strstr(cursor, "<tile ")) != NULL)
+    {
+        int tileId = -1;
+        if (!ParseIntAttr(cursor, " id=\"", &tileId)
+            || (tileId < 0) || (tileId >= tileset->tileCount))
+        {
+            TraceLog(LOG_ERROR, "TILED: animation tile has invalid id in %s", tileset->tsxPath);
+            return false;
+        }
+
+        const char *tileEnd = strstr(cursor, "</tile>");
+        if (tileEnd == NULL)
+        {
+            TraceLog(LOG_ERROR, "TILED: tile %d is not closed in %s", tileId, tileset->tsxPath);
+            return false;
+        }
+
+        const char *anim = strstr(cursor, "<animation");
+        if ((anim == NULL) || (anim >= tileEnd))
+        {
+            cursor = tileEnd + strlen("</tile>");
+            continue;
+        }
+
+        if (tileset->animCount >= TILED_MAX_ANIMATED_TILES)
+        {
+            TraceLog(LOG_ERROR, "TILED: more than %d animated tiles in %s",
+                     TILED_MAX_ANIMATED_TILES, tileset->tsxPath);
+            return false;
+        }
+
+        TiledTileAnim *out = &tileset->anims[tileset->animCount];
+        memset(out, 0, sizeof(*out));
+        out->localTileId = tileId;
+
+        const char *frame = anim;
+        while ((frame = strstr(frame, "<frame ")) != NULL && frame < tileEnd)
+        {
+            if (out->frameCount >= TILED_MAX_ANIM_FRAMES)
+            {
+                TraceLog(LOG_ERROR, "TILED: tile %d exceeds %d animation frames in %s",
+                         tileId, TILED_MAX_ANIM_FRAMES, tileset->tsxPath);
+                return false;
+            }
+
+            int frameTileId = -1;
+            int durationMs = 0;
+            if (!ParseIntAttr(frame, " tileid=\"", &frameTileId)
+                || !ParseIntAttr(frame, " duration=\"", &durationMs)
+                || (frameTileId < 0) || (frameTileId >= tileset->tileCount)
+                || (durationMs <= 0))
+            {
+                TraceLog(LOG_ERROR, "TILED: malformed animation frame on tile %d in %s",
+                         tileId, tileset->tsxPath);
+                return false;
+            }
+
+            out->frameTileIds[out->frameCount] = frameTileId;
+            out->frameDurationsMs[out->frameCount] = durationMs;
+            out->totalDurationMs += durationMs;
+            out->frameCount++;
+            frame += strlen("<frame ");
+        }
+
+        if (out->frameCount == 0)
+        {
+            TraceLog(LOG_ERROR, "TILED: tile %d has empty <animation> in %s",
+                     tileId, tileset->tsxPath);
+            return false;
+        }
+
+        tileset->animCount++;
+        cursor = tileEnd + strlen("</tile>");
+    }
+    return true;
+}
+
+static int ResolveAnimatedLocalId(const TiledTileset *tileset, int localId, double timeSec)
+{
+    for (int i = 0; i < tileset->animCount; i++)
+    {
+        const TiledTileAnim *anim = &tileset->anims[i];
+        if (anim->localTileId != localId) continue;
+        if (anim->totalDurationMs <= 0) return localId;
+
+        int ms = (int)(timeSec * 1000.0) % anim->totalDurationMs;
+        if (ms < 0) ms += anim->totalDurationMs;
+
+        int elapsed = 0;
+        for (int f = 0; f < anim->frameCount; f++)
+        {
+            elapsed += anim->frameDurationsMs[f];
+            if (ms < elapsed) return anim->frameTileIds[f];
+        }
+        return anim->frameTileIds[anim->frameCount - 1];
+    }
+    return localId;
+}
+
+// Load every external tileset listed on the map. Skips Tiled-internal
+// sources (":/...") such as automap helper tiles.
+static bool LoadMapTilesets(const char *xml, const char *mapDir, TiledLevel *lvl,
+                            TileCollision (*collisions)[TILED_MAX_TILE_TYPES])
+{
+    lvl->tilesetCount = 0;
+    const char *cursor = xml;
+
+    while ((cursor = strstr(cursor, "<tileset ")) != NULL)
+    {
+        int firstGid = 0;
+        if (!ParseIntAttr(cursor, " firstgid=\"", &firstGid) || (firstGid <= 0))
+        {
+            TraceLog(LOG_ERROR, "TILED: tileset missing valid firstgid");
+            return false;
+        }
+
+        const char *sourceAttr = strstr(cursor, " source=\"");
+        const char *tagEnd = strchr(cursor, '>');
+        if ((sourceAttr == NULL) || ((tagEnd != NULL) && (sourceAttr > tagEnd)))
+        {
+            TraceLog(LOG_ERROR, "TILED: embedded tilesets are unsupported (use external .tsx)");
+            return false;
+        }
+
+        sourceAttr += strlen(" source=\"");
+        const char *sourceEnd = strchr(sourceAttr, '"');
+        if (sourceEnd == NULL) return false;
+
+        char source[256];
+        size_t sourceLen = (size_t)(sourceEnd - sourceAttr);
+        if (sourceLen >= sizeof(source))
+        {
+            TraceLog(LOG_ERROR, "TILED: tileset source path too long");
+            return false;
+        }
+        memcpy(source, sourceAttr, sourceLen);
+        source[sourceLen] = '\0';
+
+        // Tiled automap helpers — not game art; GIDs from these are skipped at draw.
+        if (strncmp(source, ":/", 2) == 0)
+        {
+            cursor = sourceEnd;
+            continue;
+        }
+
+        if (lvl->tilesetCount >= TILED_MAX_TILESETS)
+        {
+            TraceLog(LOG_ERROR, "TILED: more than %d external tilesets", TILED_MAX_TILESETS);
+            return false;
+        }
+
+        TiledTileset *ts = &lvl->tilesets[lvl->tilesetCount];
+        memset(ts, 0, sizeof(*ts));
+        ts->firstGid = firstGid;
+        snprintf(ts->tsxPath, sizeof(ts->tsxPath), "%s/%s", mapDir, source);
+
+        char *tsx = LoadFileText(ts->tsxPath);
+        if (tsx == NULL)
+        {
+            TraceLog(LOG_ERROR, "TILED: cannot read %s", ts->tsxPath);
+            return false;
+        }
+
+        const char *tilesetTag = strstr(tsx, "<tileset");
+        bool ok = (tilesetTag != NULL)
+            && ParseIntAttr(tilesetTag, " columns=\"", &ts->columns)
+            && ParseIntAttr(tilesetTag, " tilecount=\"", &ts->tileCount)
+            && (ts->columns > 0)
+            && (ts->tileCount > 0)
+            && (ts->tileCount <= TILED_MAX_TILE_TYPES);
+
+        if (ok) ok = ParseTilesetCollisions(tsx, collisions[lvl->tilesetCount], TILED_MAX_TILE_TYPES);
+        if (ok) ok = ParseTilesetAnimations(tsx, ts);
+
+        char imageName[128] = { 0 };
+        const char *img = strstr(tsx, "<image source=\"");
+        if (ok && (img != NULL))
+        {
+            img += strlen("<image source=\"");
+            const char *q = strchr(img, '"');
+            if ((q != NULL) && ((size_t)(q - img) < sizeof(imageName)))
+            {
+                memcpy(imageName, img, (size_t)(q - img));
+            }
+            else ok = false;
+        }
+        else ok = false;
+
+        UnloadFileText(tsx);
+        if (!ok)
+        {
+            TraceLog(LOG_ERROR, "TILED: failed to parse %s", ts->tsxPath);
+            return false;
+        }
+
+        char pngPath[512];
+        snprintf(pngPath, sizeof(pngPath), "%s/%s", GetDirectoryPath(ts->tsxPath), imageName);
+
+        if (IsWindowReady())
+        {
+            ts->texture = LoadTexture(pngPath);
+            if (ts->texture.id == 0)
+            {
+                TraceLog(LOG_ERROR, "TILED: failed to load tileset image %s", pngPath);
+                return false;
+            }
+        }
+
+        ts->modTime = GetFileModTime(ts->tsxPath);
+        lvl->tilesetCount++;
+        cursor = sourceEnd;
+    }
+
+    if (lvl->tilesetCount == 0)
+    {
+        TraceLog(LOG_ERROR, "TILED: map has no loadable external tilesets");
+        return false;
+    }
+    return true;
+}
+
+static void UnloadLevelTilesets(TiledLevel *lvl)
+{
+    if (!lvl->loaded) return;
+    for (int i = 0; i < lvl->tilesetCount; i++)
+    {
+        if (lvl->tilesets[i].texture.id != 0) UnloadTexture(lvl->tilesets[i].texture);
+        lvl->tilesets[i].texture = (Texture2D){ 0 };
+    }
 }
 
 //----------------------------------------------------------------------------------
@@ -548,50 +935,22 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
         tmp.noBuildCount = ParseZones(xml, "no-build", tmp.noBuild, TILED_MAX_ZONES);
         tmp.pitCount = ParseZones(xml, "pit", tmp.pits, TILED_MAX_ZONES);
         tmp.boostCount = ParseZones(xml, "boost", tmp.boosts, TILED_MAX_ZONES);
-        if ((tmp.noBuildCount < 0) || (tmp.pitCount < 0) || (tmp.boostCount < 0)) ok = false;
+        tmp.antiGravityCount = ParseGravityZones(xml, tmp.antiGravity, TILED_MAX_ZONES);
+        if ((tmp.noBuildCount < 0) || (tmp.pitCount < 0) || (tmp.boostCount < 0)
+            || (tmp.antiGravityCount < 0)) ok = false;
     }
+
+    // External tilesets listed on the map (supports multi-tileset maps like map-11).
+    const char *dir = GetDirectoryPath(tmxPath);
+    static TileCollision tileCollisions[TILED_MAX_TILESETS][TILED_MAX_TILE_TYPES];
+    if (ok) ok = LoadMapTilesets(xml, dir, &tmp, tileCollisions);
 
     UnloadFileText(xml);
-    if (!ok) return false;
-
-    // External project tileset: image metadata plus per-tile collision objects.
-    const char *dir = GetDirectoryPath(tmxPath);
-    char tsxPath[512];
-    snprintf(tsxPath, sizeof(tsxPath), "%s/tileset.tsx", dir);
-    char *tsx = LoadFileText(tsxPath);
-    if (tsx == NULL)
-    {
-        TraceLog(LOG_ERROR, "TILED: cannot read %s", tsxPath);
-        return false;
-    }
-
-    const char *tilesetTag = strstr(tsx, "<tileset");
-    ok = (tilesetTag != NULL)
-      && ParseIntAttr(tilesetTag, " columns=\"", &tmp.tilesetColumns)
-      && ParseIntAttr(tilesetTag, " tilecount=\"", &tmp.tilesetCount)
-      && (tmp.tilesetCount <= TILED_MAX_TILE_TYPES);
-
-    static TileCollision tileCollisions[TILED_MAX_TILE_TYPES];
-    if (ok) ok = ParseTilesetCollisions(tsx, tileCollisions, TILED_MAX_TILE_TYPES);
-
-    char imageName[128] = { 0 };
-    const char *img = strstr(tsx, "<image source=\"");
-    if (ok && (img != NULL))
-    {
-        img += strlen("<image source=\"");
-        const char *q = strchr(img, '"');
-        if ((q != NULL) && ((size_t)(q - img) < sizeof(imageName)))
-        {
-            memcpy(imageName, img, (size_t)(q - img));
-        }
-        else ok = false;
-    }
-    else ok = false;
-
-    UnloadFileText(tsx);
     if (!ok)
     {
-        TraceLog(LOG_ERROR, "TILED: failed to parse %s", tsxPath);
+        // LoadMapTilesets may have loaded some textures before failing.
+        tmp.loaded = true; // so UnloadLevelTilesets walks the partial list
+        UnloadLevelTilesets(&tmp);
         return false;
     }
 
@@ -613,9 +972,11 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     static bool fullTileCollision[TILED_MAX_W * TILED_MAX_H];
     for (int i = 0; i < tileCount; i++)
     {
-        int tileId = tmp.terrainGids[i] - 1;
-        fullTileCollision[i] = (tileId >= 0) && (tileId < tmp.tilesetCount)
-                            && IsFullTileCollision(&tileCollisions[tileId],
+        int tsIndex = -1;
+        int tileId = -1;
+        fullTileCollision[i] = ResolveGid(tmp.tilesets, tmp.tilesetCount, tmp.terrainGids[i],
+                                          &tsIndex, &tileId)
+                            && IsFullTileCollision(&tileCollisions[tsIndex][tileId],
                                                    (float)tmp.tileWidth, (float)tmp.tileHeight);
     }
 
@@ -624,16 +985,20 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
                                    (float)tmp.tileWidth, (float)tmp.tileHeight, tmp.scale, tmp.offset);
     tmp.polygonCount = BuildCustomTilePolygons(
         tmp.terrainGids, tmp.mapWidth, tmp.mapHeight,
-        tileCollisions, tmp.tilesetCount,
+        tmp.tilesets, tmp.tilesetCount, tileCollisions,
         tmp.polygons, TILED_MAX_POLYGONS,
         (float)tmp.tileWidth, (float)tmp.tileHeight, tmp.scale, tmp.offset);
     if ((tmp.boxCount < 0) || (tmp.polygonCount < 0))
     {
+        tmp.loaded = true;
+        UnloadLevelTilesets(&tmp);
         return false;
     }
     if ((tmp.boxCount == 0) && (tmp.polygonCount == 0))
     {
         TraceLog(LOG_ERROR, "TILED: terrain layer has no tiles with TSX collision objects");
+        tmp.loaded = true;
+        UnloadLevelTilesets(&tmp);
         return false;
     }
 
@@ -647,21 +1012,6 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     tmp.boxes[tmp.boxCount++] = (StaticBox){ midX, top - WALL_THICKNESS * 0.5f, halfW, WALL_THICKNESS * 0.5f, 0.0f };
     tmp.boxes[tmp.boxCount++] = (StaticBox){ midX, bottom + WALL_THICKNESS * 0.5f, halfW, WALL_THICKNESS * 0.5f, 0.0f };
 
-    // Headless (level-tests): no GL context — skip tileset art; collision geometry,
-    // spawn/finish line, and LevelDef all parse from text and work without a window
-    char pngPath[512];
-    snprintf(pngPath, sizeof(pngPath), "%s/%s", dir, imageName);
-    Texture2D tex = { 0 };
-    if (IsWindowReady())
-    {
-        tex = LoadTexture(pngPath);
-        if (tex.id == 0)
-        {
-            TraceLog(LOG_ERROR, "TILED: failed to load tileset image %s", pngPath);
-            return false;
-        }
-    }
-
     // Canvas coords for spawn and all authored zones
     Vector2 spawn = { tmp.offset.x + spawnMap.x * tmp.scale, tmp.offset.y + spawnMap.y * tmp.scale };
     tmp.finishLine = finishZones[0];
@@ -669,13 +1019,12 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     MapZonesToCanvas(tmp.noBuild, tmp.noBuildCount, tmp.scale, tmp.offset);
     MapZonesToCanvas(tmp.pits, tmp.pitCount, tmp.scale, tmp.offset);
     MapZonesToCanvas(tmp.boosts, tmp.boostCount, tmp.scale, tmp.offset);
+    MapGravityZonesToCanvas(tmp.antiGravity, tmp.antiGravityCount, tmp.scale, tmp.offset);
 
-    // Commit: replace previous state
-    if (lvl->loaded && (lvl->tileset.id != 0)) UnloadTexture(lvl->tileset);
+    // Commit: replace previous state (textures already live in tmp.tilesets)
+    UnloadLevelTilesets(lvl);
     *lvl = tmp;
-    lvl->tileset = tex;
     lvl->modTime = GetFileModTime(tmxPath);
-    lvl->tilesetModTime = GetFileModTime(tsxPath);
     lvl->loaded = true;
     snprintf(lvl->name, sizeof(lvl->name), "Tiled: %s", GetFileNameWithoutExt(tmxPath));
 
@@ -695,28 +1044,34 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
         .pitCount = lvl->pitCount,
         .boosts = lvl->boosts,
         .boostCount = lvl->boostCount,
+        .antiGravity = lvl->antiGravity,
+        .antiGravityCount = lvl->antiGravityCount,
     };
 
-    TraceLog(LOG_INFO, "TILED: loaded %s (%dx%d tiles, %d boxes, %d polygons, %d no-build, %d pits, %d boosts, ink %.0f/%.0f px, %d cannons)",
-             tmxPath, lvl->mapWidth, lvl->mapHeight, lvl->boxCount,
-             lvl->polygonCount, lvl->noBuildCount, lvl->pitCount, lvl->boostCount,
+    int animTiles = 0;
+    for (int i = 0; i < lvl->tilesetCount; i++) animTiles += lvl->tilesets[i].animCount;
+    TraceLog(LOG_INFO, "TILED: loaded %s (%dx%d tiles, %d tilesets, %d animated, %d boxes, %d polygons, %d no-build, %d pits, %d boosts, %d anti-gravity, ink %.0f/%.0f px, %d cannons)",
+             tmxPath, lvl->mapWidth, lvl->mapHeight, lvl->tilesetCount, animTiles, lvl->boxCount,
+             lvl->polygonCount, lvl->noBuildCount, lvl->pitCount, lvl->boostCount, lvl->antiGravityCount,
              lvl->lineCapacity, lvl->boostLineCapacity, lvl->cannonCount);
     return true;
 }
 
 void TiledLevelUnload(TiledLevel *lvl)
 {
-    if (lvl->loaded && (lvl->tileset.id != 0)) UnloadTexture(lvl->tileset);
+    UnloadLevelTilesets(lvl);
     lvl->loaded = false;
 }
 
 bool TiledLevelFileChanged(const TiledLevel *lvl)
 {
     if (!lvl->loaded) return false;
-    char tsxPath[512];
-    snprintf(tsxPath, sizeof(tsxPath), "%s/tileset.tsx", GetDirectoryPath(lvl->tmxPath));
-    return (GetFileModTime(lvl->tmxPath) != lvl->modTime)
-        || (GetFileModTime(tsxPath) != lvl->tilesetModTime);
+    if (GetFileModTime(lvl->tmxPath) != lvl->modTime) return true;
+    for (int i = 0; i < lvl->tilesetCount; i++)
+    {
+        if (GetFileModTime(lvl->tilesets[i].tsxPath) != lvl->tilesets[i].modTime) return true;
+    }
+    return false;
 }
 
 bool TiledLevelNoBuildContains(const TiledLevel *lvl, Vector2 p)
@@ -768,6 +1123,85 @@ static void DrawZones(const PolyZone *zones, int count, const char *label, Color
     }
 }
 
+// Unit vector for gravity after a clockwise rotation from default down (screen Y-down).
+static Vector2 GravityDirFromAngle(float angleDeg)
+{
+    float rad = angleDeg * DEG2RAD;
+    return (Vector2){ -sinf(rad), cosf(rad) };
+}
+
+static void DrawGravityArrow(Vector2 center, Vector2 dir, float length, Color color)
+{
+    Vector2 tip = { center.x + dir.x * length * 0.5f, center.y + dir.y * length * 0.5f };
+    Vector2 tail = { center.x - dir.x * length * 0.5f, center.y - dir.y * length * 0.5f };
+    DrawLineEx(tail, tip, 2.5f, color);
+
+    float head = length * 0.35f;
+    Vector2 back = { tip.x - dir.x * head, tip.y - dir.y * head };
+    Vector2 normal = { -dir.y * head * 0.55f, dir.x * head * 0.55f };
+    DrawLineEx((Vector2){ back.x + normal.x, back.y + normal.y }, tip, 2.5f, color);
+    DrawLineEx((Vector2){ back.x - normal.x, back.y - normal.y }, tip, 2.5f, color);
+}
+
+static void DrawAntiGravityZones(const GravityZone *zones, int count)
+{
+    Color base = { 40, 170, 130, 255 };
+    Color fill = base;
+    fill.a = 32;
+    Color outline = base;
+    outline.a = 130;
+    Color arrow = base;
+    arrow.a = 200;
+
+    for (int z = 0; z < count; z++)
+    {
+        const GravityZone *gz = &zones[z];
+        const PolyZone *zone = &gz->zone;
+
+        for (int i = 1; i < zone->pointCount - 1; i++)
+        {
+            DrawTriangle(zone->points[0], zone->points[i + 1], zone->points[i], fill);
+            DrawTriangle(zone->points[0], zone->points[i], zone->points[i + 1], fill);
+        }
+        for (int i = 0; i < zone->pointCount; i++)
+        {
+            Vector2 a = zone->points[i];
+            Vector2 b = zone->points[(i + 1) % zone->pointCount];
+            DrawLineEx(a, b, 3.0f, outline);
+        }
+
+        Vector2 centroid = { 0 };
+        float minX = zone->points[0].x, maxX = zone->points[0].x;
+        float minY = zone->points[0].y, maxY = zone->points[0].y;
+        for (int i = 0; i < zone->pointCount; i++)
+        {
+            centroid.x += zone->points[i].x;
+            centroid.y += zone->points[i].y;
+            if (zone->points[i].x < minX) minX = zone->points[i].x;
+            if (zone->points[i].x > maxX) maxX = zone->points[i].x;
+            if (zone->points[i].y < minY) minY = zone->points[i].y;
+            if (zone->points[i].y > maxY) maxY = zone->points[i].y;
+        }
+        centroid.x /= (float)zone->pointCount;
+        centroid.y /= (float)zone->pointCount;
+
+        Vector2 dir = GravityDirFromAngle(gz->gravityAngleDeg);
+        const float spacing = 36.0f;
+        for (float y = minY + spacing * 0.5f; y <= maxY; y += spacing)
+        {
+            for (float x = minX + spacing * 0.5f; x <= maxX; x += spacing)
+            {
+                Vector2 p = { x, y };
+                if (!PolyZoneContains(zone, p)) continue;
+                DrawGravityArrow(p, dir, 18.0f, arrow);
+            }
+        }
+
+        // Stronger center arrow so the force direction reads immediately
+        DrawGravityArrow(centroid, dir, 28.0f, outline);
+    }
+}
+
 void RenderTiledLevel(const TiledLevel *lvl)
 {
     if (!lvl->loaded) return;
@@ -796,16 +1230,24 @@ void RenderTiledLevel(const TiledLevel *lvl)
         }
     }
 
+    double now = GetTime();
     for (int y = 0; y < lvl->mapHeight; y++)
     {
         for (int x = 0; x < lvl->mapWidth; x++)
         {
             int gid = lvl->terrainGids[y * lvl->mapWidth + x];
-            if ((gid <= 0) || (gid > lvl->tilesetCount)) continue; // 0 = empty; > tilecount = automap internals
+            int tsIndex = -1;
+            int localId = -1;
+            // Unknown GIDs (e.g. skipped automap tilesets) are left blank.
+            if (!ResolveGid(lvl->tilesets, lvl->tilesetCount, gid, &tsIndex, &localId)) continue;
 
+            const TiledTileset *ts = &lvl->tilesets[tsIndex];
+            if (ts->texture.id == 0) continue;
+
+            int drawId = ResolveAnimatedLocalId(ts, localId, now);
             Rectangle src = {
-                (float)((gid - 1) % lvl->tilesetColumns) * tw,
-                (float)((gid - 1) / lvl->tilesetColumns) * th,
+                (float)(drawId % ts->columns) * tw,
+                (float)(drawId / ts->columns) * th,
                 tw, th
             };
             Rectangle dest = {
@@ -813,11 +1255,12 @@ void RenderTiledLevel(const TiledLevel *lvl)
                 lvl->offset.y + (float)y * th * lvl->scale,
                 tw * lvl->scale, th * lvl->scale
             };
-            DrawTexturePro(lvl->tileset, src, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
+            DrawTexturePro(ts->texture, src, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
         }
     }
 
     DrawZones(lvl->noBuild, lvl->noBuildCount, "no build", (Color){ 210, 50, 50, 255 });
     DrawZones(lvl->pits, lvl->pitCount, "pit", (Color){ 70, 50, 40, 255 });
     DrawZones(lvl->boosts, lvl->boostCount, "boost", (Color){ 40, 160, 220, 255 });
+    DrawAntiGravityZones(lvl->antiGravity, lvl->antiGravityCount);
 }

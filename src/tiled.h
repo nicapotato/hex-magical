@@ -3,12 +3,17 @@
 *   tiled.h - Tiled (.tmx) level loading for hex-magical
 *
 *   Conventions expected in the .tmx (strict — load fails loud otherwise):
+*     - One or more external tilesets (<tileset firstgid source="...tsx"/>);
+*       Tiled tile animations (<animation>/<frame>) are played at draw time
 *     - Tile layer "terrain": visual tiles whose TSX collision objects define physics
 *     - Point object named "ball-spawn" (or "ball")
 *     - Polygon/rect object named "finish-line": ball touching it wins
 *     - Optional polygon/rect objects named "no-build": players cannot sketch inside
 *     - Optional polygon/rect objects named "pit": ball inside = game over
 *     - Optional polygon/rect objects named "boost": ball inside gets a speed boost
+*     - Optional polygon/rect objects named "anti-gravity" with required custom
+*       property "gravity-angle" (float degrees): ball inside gets gravity rotated
+*       that many degrees clockwise from default down
     *     - Required custom properties on the map (Map > Custom Properties in Tiled):
     *         "line-capacity" (float, tile-widths of crayon ink)
     *         "boost_line-capacity" (float, tile-widths of boost line ink)
@@ -31,6 +36,32 @@
 #define TILED_MAX_BOXES 1024
 #define TILED_MAX_POLYGONS 2048
 #define TILED_MAX_ZONES 30
+#define TILED_MAX_TILESETS 8
+#define TILED_MAX_ANIM_FRAMES 8
+#define TILED_MAX_ANIMATED_TILES 32
+
+// One tile's animation cycle from the .tsx (<animation>/<frame>).
+typedef struct TiledTileAnim
+{
+    int localTileId;
+    int frameCount;
+    int totalDurationMs;
+    int frameTileIds[TILED_MAX_ANIM_FRAMES];
+    int frameDurationsMs[TILED_MAX_ANIM_FRAMES];
+} TiledTileAnim;
+
+// External tileset referenced by a map (<tileset firstgid source>).
+typedef struct TiledTileset
+{
+    int firstGid;
+    int tileCount;
+    int columns;
+    Texture2D texture;
+    long modTime;
+    char tsxPath[512];
+    TiledTileAnim anims[TILED_MAX_ANIMATED_TILES];
+    int animCount;
+} TiledTileset;
 
 typedef struct TiledLevel
 {
@@ -38,7 +69,6 @@ typedef struct TiledLevel
     char tmxPath[512];
     char name[64];
     long modTime;
-    long tilesetModTime;
 
     int mapWidth;      // tiles
     int mapHeight;
@@ -54,8 +84,7 @@ typedef struct TiledLevel
     int cannonCount;
 
     int terrainGids[TILED_MAX_W * TILED_MAX_H];
-    Texture2D tileset;
-    int tilesetColumns;
+    TiledTileset tilesets[TILED_MAX_TILESETS];
     int tilesetCount;
 
     // Full terrain tiles are merged into boxes; custom TSX shapes remain polygons.
@@ -71,6 +100,8 @@ typedef struct TiledLevel
     int pitCount;
     PolyZone boosts[TILED_MAX_ZONES];
     int boostCount;
+    GravityZone antiGravity[TILED_MAX_ZONES];
+    int antiGravityCount;
 
     LevelDef def;      // ready to hand to PhysicsLoadLevel (geometry points into this struct)
 } TiledLevel;

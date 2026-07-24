@@ -30,7 +30,7 @@ typedef struct StaticPolygon
 } StaticPolygon;
 
 // Gameplay area authored in Tiled as a polygon or rectangle object
-// (no-build, pit, boost, finish-line). Canvas coordinates, closed polygon.
+// (no-build, pit, boost, finish-line, anti-gravity). Canvas coordinates, closed polygon.
 #define POLY_ZONE_MAX_POINTS 32
 
 typedef struct PolyZone
@@ -38,6 +38,14 @@ typedef struct PolyZone
     Vector2 points[POLY_ZONE_MAX_POINTS];
     int pointCount;
 } PolyZone;
+
+// anti-gravity zone: while the ball is inside, world gravity is rotated
+// clockwise from the default "down" by gravityAngleDeg (90/180/270/...).
+typedef struct GravityZone
+{
+    PolyZone zone;
+    float gravityAngleDeg;
+} GravityZone;
 
 // Ray-cast point-in-polygon (handles concave outlines)
 static inline bool PolyZoneContains(const PolyZone *zone, Vector2 p)
@@ -77,6 +85,8 @@ typedef struct LevelDef
     int pitCount;
     const PolyZone *boosts; // ball inside = speed boost
     int boostCount;
+    const GravityZone *antiGravity; // ball inside = rotated gravity
+    int antiGravityCount;
 } LevelDef;
 
 #endif // LEVELS_H

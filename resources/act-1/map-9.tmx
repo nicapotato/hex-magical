@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="60" height="30" tilewidth="16" tileheight="16" infinite="0" nextlayerid="3" nextobjectid="6">
+<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="60" height="30" tilewidth="16" tileheight="16" infinite="0" nextlayerid="3" nextobjectid="8">
  <properties>
   <property name="boost_line-capacity" type="float" value="20000"/>
   <property name="cannon-count" type="int" value="3"/>
@@ -44,8 +44,20 @@
   <object id="2" name="finish-line" x="913.333" y="338.667">
    <polygon points="0,0 -1.33333,122.667 28,122.667 28,-2.66667"/>
   </object>
-  <object id="3" name="ball-spawn" x="37.3333" y="58.6667">
+  <object id="3" name="ball-spawn" x="576" y="354">
    <point/>
+  </object>
+  <object id="6" name="anti-gravity" x="653.123" y="285.206">
+   <properties>
+    <property name="gravity-angle" type="float" value="200"/>
+   </properties>
+   <polygon points="0,0 45.3532,136.06 93.541,136.06 121.887,79.3681 126.139,-117.635 46.7705,-117.635"/>
+  </object>
+  <object id="7" name="anti-gravity" x="706" y="154">
+   <properties>
+    <property name="gravity-angle" type="float" value="180"/>
+   </properties>
+   <polygon points="0,0 80,4 80.6667,80 220,84.6667 224.667,-41.3333 178,-104.667 92,-106 -2.66667,-40"/>
   </object>
  </objectgroup>
 </map>

@@ -286,6 +286,8 @@ void PhysicsLoadLevel(PhysicsWorld *phys, const LevelDef *level)
     phys->pitCount = level->pitCount;
     phys->boosts = level->boosts;
     phys->boostCount = level->boostCount;
+    phys->antiGravity = level->antiGravity;
+    phys->antiGravityCount = level->antiGravityCount;
 }
 
 void PhysicsStartSimulation(PhysicsWorld *phys)
@@ -348,6 +350,26 @@ void PhysicsStopSimulation(PhysicsWorld *phys)
 bool PhysicsIsSimulating(const PhysicsWorld *phys)
 {
     return phys->valid && phys->simulating;
+}
+
+// Default gravity is down (0, +Y). An anti-gravity zone rotates that vector
+// clockwise by gravityAngleDeg on screen (Y-down): 90→left, 180→up, 270→right.
+static void ApplyAntiGravityZones(PhysicsWorld *phys)
+{
+    b2Vec2 gravity = { 0.0f, WORLD_GRAVITY_Y };
+    if ((phys->antiGravityCount > 0) && b2Body_IsValid(phys->ballId))
+    {
+        Vector2 ball = FromB2(b2Body_GetPosition(phys->ballId));
+        for (int z = 0; z < phys->antiGravityCount; z++)
+        {
+            if (!PolyZoneContains(&phys->antiGravity[z].zone, ball)) continue;
+            float rad = phys->antiGravity[z].gravityAngleDeg * DEG2RAD;
+            gravity.x = -WORLD_GRAVITY_Y * sinf(rad);
+            gravity.y = WORLD_GRAVITY_Y * cosf(rad);
+            break; // first containing zone wins
+        }
+    }
+    b2World_SetGravity(phys->worldId, gravity);
 }
 
 // While the ball sits inside a boost zone, push it along its velocity so it can
@@ -467,6 +489,7 @@ void PhysicsStep(PhysicsWorld *phys, float dt)
 
     while (phys->accumulator >= step)
     {
+        ApplyAntiGravityZones(phys);
         ApplyBoostZones(phys);
         ApplyBoostLines(phys);
         ApplyCannons(phys, step);
