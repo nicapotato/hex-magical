@@ -1,6 +1,6 @@
 /*******************************************************************************************
 *
-*   admin.c - Admin panel: live physics tunables (ball weight, bounciness, drop force)
+*   admin.c - Admin panel: live physics tunables (ball, drop force, boost line)
 *
 ********************************************************************************************/
 
@@ -16,7 +16,7 @@
 #define ADMIN_FONT 14
 #define ADMIN_HEADER_FONT 16
 #define ADMIN_ROW_H 38.0f
-#define ADMIN_SLIDER_COUNT 3
+#define ADMIN_SLIDER_COUNT 5
 #define ADMIN_ACTION_BTN_H 26.0f
 #define ADMIN_GAP 8.0f
 #define ADMIN_PATH_FONT 10
@@ -49,6 +49,8 @@ static const SliderDef SLIDERS[ADMIN_SLIDER_COUNT] = {
     { "Ball weight (density)", TUNE_BALL_DENSITY_MIN, TUNE_BALL_DENSITY_MAX, "%.2f" },
     { "Bounciness", TUNE_BALL_RESTITUTION_MIN, TUNE_BALL_RESTITUTION_MAX, "%.2f" },
     { "Drop force (down)", TUNE_DROP_FORCE_MIN, TUNE_DROP_FORCE_MAX, "%.0f" },
+    { "Boost vel rate", TUNE_BOOST_VEL_RATE_MIN, TUNE_BOOST_VEL_RATE_MAX, "%.0f" },
+    { "Boost vel max", TUNE_BOOST_VEL_MAX_MIN, TUNE_BOOST_VEL_MAX_MAX, "%.0f" },
 };
 
 static float GetSliderValue(const PhysicsTunables *t, int row)
@@ -57,7 +59,9 @@ static float GetSliderValue(const PhysicsTunables *t, int row)
     {
         case 0: return t->ballDensity;
         case 1: return t->ballRestitution;
-        default: return t->dropForce;
+        case 2: return t->dropForce;
+        case 3: return t->boostVelRate;
+        default: return t->boostVelMax;
     }
 }
 
@@ -67,7 +71,9 @@ static void SetSliderValue(PhysicsTunables *t, int row, float value)
     {
         case 0: t->ballDensity = value; break;
         case 1: t->ballRestitution = value; break;
-        default: t->dropForce = value; break;
+        case 2: t->dropForce = value; break;
+        case 3: t->boostVelRate = value; break;
+        default: t->boostVelMax = value; break;
     }
 }
 

@@ -18,7 +18,7 @@
 // Boost zones accelerate the ball along its velocity — roughly 2x gravity, strong
 // enough to carry it across gaps/pits it could not clear on its own
 #define BOOST_ACCEL 4200.0f
-// Below this speed the ball has no meaningful direction to boost along
+// Below this speed the ball has no meaningful direction to amplify along
 #define BOOST_MIN_SPEED 1.0f
 
 //----------------------------------------------------------------------------------
@@ -216,6 +216,8 @@ void PhysicsTunablesDefaults(PhysicsTunables *t)
     t->ballDensity = TUNE_BALL_DENSITY_DEFAULT;
     t->ballRestitution = TUNE_BALL_RESTITUTION_DEFAULT;
     t->dropForce = TUNE_DROP_FORCE_DEFAULT;
+    t->boostVelRate = TUNE_BOOST_VEL_RATE_DEFAULT;
+    t->boostVelMax = TUNE_BOOST_VEL_MAX_DEFAULT;
 }
 
 void PhysicsApplyBallTunables(PhysicsWorld *phys)
@@ -297,6 +299,7 @@ void PhysicsStartSimulation(PhysicsWorld *phys)
     phys->simulating = true;
     phys->trailCount = 0;
     phys->trailStepCounter = 0;
+    phys->boostLineAccel = 0.0f;
     for (int i = 0; i < MAX_CANNONS; i++) phys->cannons[i].cooldown = 0.0f;
 
     if (b2Body_IsValid(phys->ballId))
@@ -330,6 +333,7 @@ void PhysicsStopSimulation(PhysicsWorld *phys)
 
     phys->simulating = false;
     phys->accumulator = 0.0f;
+    phys->boostLineAccel = 0.0f;
 
     // The finished recording becomes the ghost trail shown during build
     if (phys->trailCount >= 2)
@@ -395,38 +399,55 @@ static void ApplyBoostZones(PhysicsWorld *phys)
     b2Body_ApplyForceToCenter(phys->ballId, force, true);
 }
 
-// While the ball is near a boost line, push it along the stroke's drawn
-// direction — unlike boost zones this steers, not just accelerates
-static void ApplyBoostLines(PhysicsWorld *phys)
+// While near a boost line, gradually build acceleration along the ball's current
+// velocity (no steering). Charge resets as soon as the ball leaves every line.
+static void ApplyBoostLines(PhysicsWorld *phys, float step)
 {
-    if (!b2Body_IsValid(phys->ballId)) return;
+    if (!b2Body_IsValid(phys->ballId))
+    {
+        phys->boostLineAccel = 0.0f;
+        return;
+    }
 
     Vector2 ball = FromB2(b2Body_GetPosition(phys->ballId));
-
-    // Nearest segment across all lines wins so overlapping lines never stack
-    float bestDist = BOOST_LINE_RADIUS;
-    Vector2 bestTangent = { 0.0f, 0.0f };
-    for (int l = 0; l < MAX_BOOST_LINES; l++)
+    bool onLine = false;
+    for (int l = 0; l < MAX_BOOST_LINES && !onLine; l++)
     {
         const BoostLine *line = &phys->boostLines[l];
         if (!line->active) continue;
 
         for (int i = 0; i < line->pointCount - 1; i++)
         {
-            Vector2 tangent = { 0 };
-            float d = PointSegmentDist(ball, line->points[i], line->points[i + 1], &tangent);
-            if (d < bestDist)
+            Vector2 unused = { 0 };
+            if (PointSegmentDist(ball, line->points[i], line->points[i + 1], &unused) < BOOST_LINE_RADIUS)
             {
-                bestDist = d;
-                bestTangent = tangent;
+                onLine = true;
+                break;
             }
         }
     }
 
-    if ((bestTangent.x == 0.0f) && (bestTangent.y == 0.0f)) return;
+    if (!onLine)
+    {
+        phys->boostLineAccel = 0.0f;
+        return;
+    }
+
+    float maxAccel = phys->tunables.boostVelMax;
+    if (maxAccel < 0.0f) maxAccel = 0.0f;
+    phys->boostLineAccel += phys->tunables.boostVelRate * step;
+    if (phys->boostLineAccel > maxAccel) phys->boostLineAccel = maxAccel;
+    if (phys->boostLineAccel <= 0.0f) return;
+
+    b2Vec2 vel = b2Body_GetLinearVelocity(phys->ballId);
+    float speed = sqrtf(vel.x * vel.x + vel.y * vel.y);
+    if (speed < BOOST_MIN_SPEED) return;
 
     float mass = b2Body_GetMass(phys->ballId);
-    b2Vec2 force = { bestTangent.x * BOOST_LINE_ACCEL * mass, bestTangent.y * BOOST_LINE_ACCEL * mass };
+    b2Vec2 force = {
+        vel.x / speed * phys->boostLineAccel * mass,
+        vel.y / speed * phys->boostLineAccel * mass
+    };
     b2Body_ApplyForceToCenter(phys->ballId, force, true);
 }
 
@@ -491,7 +512,7 @@ void PhysicsStep(PhysicsWorld *phys, float dt)
     {
         ApplyAntiGravityZones(phys);
         ApplyBoostZones(phys);
-        ApplyBoostLines(phys);
+        ApplyBoostLines(phys, step);
         ApplyCannons(phys, step);
         b2World_Step(phys->worldId, step, PHYSICS_SUBSTEPS);
         RecordTrailSample(phys);
@@ -709,7 +730,7 @@ bool PhysicsEraseAtPoint(PhysicsWorld *phys, Vector2 worldPoint)
 }
 
 //----------------------------------------------------------------------------------
-// Boost lines and cannons (build resources — no Box2D bodies)
+// Boost lines and cannons
 //----------------------------------------------------------------------------------
 int PhysicsCreateBoostLine(PhysicsWorld *phys, const Vector2 *worldPoints, int count)
 {
@@ -724,6 +745,40 @@ int PhysicsCreateBoostLine(PhysicsWorld *phys, const Vector2 *worldPoints, int c
         line->pointCount = (count < MAX_STROKE_POINTS) ? count : MAX_STROKE_POINTS;
         for (int p = 0; p < line->pointCount; p++) line->points[p] = worldPoints[p];
 
+        // Solid capsule-chain track — identical collision to a crayon stroke,
+        // so the ball rides the boost line like any other drawn line
+        b2BodyDef bodyDef = b2DefaultBodyDef();
+        bodyDef.type = b2_staticBody;
+        bodyDef.position = (b2Vec2){ 0.0f, 0.0f }; // points stored world space
+        line->bodyId = b2CreateBody(phys->worldId, &bodyDef);
+
+        b2ShapeDef shapeDef = b2DefaultShapeDef();
+        shapeDef.material.friction = 0.55f;
+        shapeDef.material.restitution = 0.1f;
+
+        const float minSegLen = 1.0f;
+        int capsules = 0;
+        for (int p = 0; p < line->pointCount - 1; p++)
+        {
+            float dx = line->points[p + 1].x - line->points[p].x;
+            float dy = line->points[p + 1].y - line->points[p].y;
+            if (sqrtf(dx * dx + dy * dy) < minSegLen) continue;
+
+            b2Capsule capsule = { 0 };
+            capsule.center1 = ToB2(line->points[p]);
+            capsule.center2 = ToB2(line->points[p + 1]);
+            capsule.radius = STROKE_PHYSICS_RADIUS;
+            b2CreateCapsuleShape(line->bodyId, &shapeDef, &capsule);
+            capsules++;
+        }
+        if (capsules == 0)
+        {
+            b2Circle circle = { 0 };
+            circle.center = ToB2(line->points[0]);
+            circle.radius = STROKE_PHYSICS_RADIUS;
+            b2CreateCircleShape(line->bodyId, &shapeDef, &circle);
+        }
+
         UndoAction *undo = PushUndo(phys, UNDO_DRAW_BOOST);
         if (undo) undo->slot = i;
 
@@ -732,6 +787,14 @@ int PhysicsCreateBoostLine(PhysicsWorld *phys, const Vector2 *worldPoints, int c
 
     TraceLog(LOG_WARNING, "PHYSICS: more than %d boost lines", MAX_BOOST_LINES);
     return -1;
+}
+
+static void DestroyBoostLine(BoostLine *line)
+{
+    if (b2Body_IsValid(line->bodyId)) b2DestroyBody(line->bodyId);
+    line->bodyId = b2_nullBodyId;
+    line->active = false;
+    line->pointCount = 0;
 }
 
 bool PhysicsEraseBoostLineAt(PhysicsWorld *phys, Vector2 worldPoint)
@@ -754,8 +817,7 @@ bool PhysicsEraseBoostLineAt(PhysicsWorld *phys, Vector2 worldPoint)
                     for (int q = 0; q < line->pointCount; q++) undo->points[q] = line->points[q];
                 }
 
-                line->active = false;
-                line->pointCount = 0;
+                DestroyBoostLine(line);
                 return true;
             }
         }
@@ -845,8 +907,7 @@ bool PhysicsUndoLastAction(PhysicsWorld *phys)
         } break;
         case UNDO_DRAW_BOOST:
         {
-            phys->boostLines[action->slot].active = false;
-            phys->boostLines[action->slot].pointCount = 0;
+            DestroyBoostLine(&phys->boostLines[action->slot]);
         } break;
         case UNDO_ADD_CANNON:
         {

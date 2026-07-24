@@ -10,7 +10,7 @@
 *
 *       version 2
 *       level map-2.tmx
-*       tunables density=2.5 restitution=0.25 dropforce=0.0
+*       tunables density=2.5 restitution=0.25 dropforce=0.0 boostrate=10000 boostmax=6000
 *       stroke 142.0,310.5 198.2,300.1 240.7,315.9
 *       stroke 300.0,400.0 350.0,390.0
 *       boost 120.0,500.0 180.0,470.0
@@ -26,7 +26,7 @@
 
 #include <stdbool.h>
 
-#define SOLUTION_VERSION 2
+#define SOLUTION_VERSION 3
 #define SOLUTION_MAX_STROKES MAX_DRAWN_BODIES
 #define SOLUTION_MAX_BOOSTS MAX_BOOST_LINES
 #define SOLUTION_MAX_CANNONS MAX_CANNONS

@@ -235,62 +235,22 @@ static void DrawDirectionArrow(Vector2 tip, Vector2 dir, float size, Color color
 
 void RenderBoostLines(const PhysicsWorld *phys)
 {
-    Color dash = BOOST_ORANGE;
-    dash.a = 200;
+    // Continuous stroke like crayon — orange marks it as a speed amp, not a rail
+    Color ink = BOOST_ORANGE;
+    ink.a = 220;
+    Color glow = BOOST_ORANGE;
+    glow.a = 70;
 
     for (int l = 0; l < MAX_BOOST_LINES; l++)
     {
         const BoostLine *line = &phys->boostLines[l];
         if (!line->active || (line->pointCount < 2)) continue;
 
-        // Dashed stroke: walk the polyline alternating ink and gap
-        const float dashLen = 10.0f;
-        const float gapLen = 7.0f;
-        float phase = 0.0f;
-        float sinceArrow = 0.0f;
         for (int i = 0; i < line->pointCount - 1; i++)
         {
-            Vector2 a = line->points[i];
-            Vector2 b = line->points[i + 1];
-            float dx = b.x - a.x;
-            float dy = b.y - a.y;
-            float segLen = sqrtf(dx * dx + dy * dy);
-            if (segLen < 0.001f) continue;
-            Vector2 dir = { dx / segLen, dy / segLen };
-
-            float t = 0.0f;
-            while (t < segLen)
-            {
-                float cycle = dashLen + gapLen;
-                float inCycle = fmodf(phase + t, cycle);
-                float run = (inCycle < dashLen) ? (dashLen - inCycle) : (cycle - inCycle);
-                float end = t + run;
-                if (end > segLen) end = segLen;
-                if (inCycle < dashLen)
-                {
-                    DrawLineEx((Vector2){ a.x + dir.x * t, a.y + dir.y * t },
-                               (Vector2){ a.x + dir.x * end, a.y + dir.y * end }, 5.0f, dash);
-                }
-                t = end;
-            }
-            phase = fmodf(phase + segLen, dashLen + gapLen);
-
-            // Direction arrows roughly every 60 px of stroke
-            sinceArrow += segLen;
-            if (sinceArrow >= 60.0f)
-            {
-                sinceArrow = 0.0f;
-                DrawDirectionArrow(b, dir, 12.0f, BOOST_ORANGE);
-            }
+            DrawLineEx(line->points[i], line->points[i + 1], STROKE_PHYSICS_RADIUS * 2.8f, glow);
+            DrawLineEx(line->points[i], line->points[i + 1], STROKE_PHYSICS_RADIUS * 2.0f, ink);
         }
-
-        // Always mark the stroke end so short lines still read as directional
-        Vector2 endA = line->points[line->pointCount - 2];
-        Vector2 endB = line->points[line->pointCount - 1];
-        float ex = endB.x - endA.x;
-        float ey = endB.y - endA.y;
-        float elen = sqrtf(ex * ex + ey * ey);
-        if (elen > 0.001f) DrawDirectionArrow(endB, (Vector2){ ex / elen, ey / elen }, 14.0f, BOOST_ORANGE);
     }
 }
 

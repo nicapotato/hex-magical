@@ -25,9 +25,8 @@
 #define MAX_BOOST_LINES 16
 #define MAX_CANNONS 8
 
-// Boost lines push the ball along the drawn direction while it is nearby
+// Boost lines amplify the ball's current velocity while nearby (no steering)
 #define BOOST_LINE_RADIUS 30.0f
-#define BOOST_LINE_ACCEL 4200.0f
 
 // Cannons: ball entering the muzzle circle is relaunched along the barrel
 #define CANNON_ENTRY_RADIUS 26.0f
@@ -52,12 +51,21 @@
 #define TUNE_DROP_FORCE_DEFAULT       0.0f
 #define TUNE_DROP_FORCE_MIN           0.0f
 #define TUNE_DROP_FORCE_MAX           2500.0f
+// Boost line: acceleration along current velocity builds while on the line
+#define TUNE_BOOST_VEL_RATE_DEFAULT   10000.0f
+#define TUNE_BOOST_VEL_RATE_MIN       0.0f
+#define TUNE_BOOST_VEL_RATE_MAX       40000.0f
+#define TUNE_BOOST_VEL_MAX_DEFAULT    6000.0f
+#define TUNE_BOOST_VEL_MAX_MIN        0.0f
+#define TUNE_BOOST_VEL_MAX_MAX        20000.0f
 
 typedef struct PhysicsTunables
 {
     float ballDensity;     // ball "weight" — mass via shape density
     float ballRestitution; // bounciness 0..~1
     float dropForce;       // initial downward velocity kick applied at drop
+    float boostVelRate;    // accel/sec gained while on a boost line
+    float boostVelMax;     // cap on boost acceleration along current velocity
 } PhysicsTunables;
 
 // Build-phase undo: every draw/erase/place action is recorded so Alt+Z can
@@ -95,11 +103,13 @@ typedef struct DrawnBody
     Color crayonColor;
 } DrawnBody;
 
-// Player-drawn boost line: no collider — while the ball is near the polyline it
-// is accelerated along the stroke's drawn direction (tangent of nearest segment)
+// Player-drawn boost line: a solid capsule-chain track exactly like a crayon
+// stroke, plus a speed amp — while the ball rides it, its current velocity is
+// amplified with a gradual buildup (rate/max from admin tunables)
 typedef struct BoostLine
 {
     bool active;
+    b2BodyId bodyId;                   // static collider, same as drawn strokes
     Vector2 points[MAX_STROKE_POINTS]; // world space, post-smoothing
     int pointCount;
 } BoostLine;
@@ -175,6 +185,9 @@ typedef struct PhysicsWorld
     int staticBoxCount;
 
     PhysicsTunables tunables; // persists across level loads
+
+    // Built-up boost-line acceleration along current velocity (0 when off a line)
+    float boostLineAccel;
 
     float accumulator;
     bool simulating; // false = build phase (ball disabled; strokes are static track)

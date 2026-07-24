@@ -73,8 +73,9 @@ bool SolutionSave(const Solution *sol, const char *path)
 
     fprintf(f, "version %d\n", SOLUTION_VERSION);
     fprintf(f, "level %s\n", sol->levelFile);
-    fprintf(f, "tunables density=%.4f restitution=%.4f dropforce=%.4f\n",
-            sol->tunables.ballDensity, sol->tunables.ballRestitution, sol->tunables.dropForce);
+    fprintf(f, "tunables density=%.4f restitution=%.4f dropforce=%.4f boostrate=%.4f boostmax=%.4f\n",
+            sol->tunables.ballDensity, sol->tunables.ballRestitution, sol->tunables.dropForce,
+            sol->tunables.boostVelRate, sol->tunables.boostVelMax);
 
     for (int i = 0; i < sol->strokeCount; i++)
     {
@@ -183,9 +184,10 @@ bool SolutionLoad(Solution *sol, const char *path)
         }
         else if (strncmp(start, "tunables ", 9) == 0)
         {
-            if (sscanf(start + 9, "density=%f restitution=%f dropforce=%f",
+            if (sscanf(start + 9, "density=%f restitution=%f dropforce=%f boostrate=%f boostmax=%f",
                        &sol->tunables.ballDensity, &sol->tunables.ballRestitution,
-                       &sol->tunables.dropForce) != 3)
+                       &sol->tunables.dropForce, &sol->tunables.boostVelRate,
+                       &sol->tunables.boostVelMax) != 5)
             {
                 fprintf(stderr, "SOLUTION: %s:%d malformed tunables line\n", path, lineNo);
                 fclose(f);

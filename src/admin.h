@@ -1,6 +1,6 @@
 /*******************************************************************************************
 *
-*   admin.h - Admin panel: live physics tunables (ball weight, bounciness, drop force)
+*   admin.h - Admin panel: live physics tunables (ball, drop force, boost line)
 *
 ********************************************************************************************/
 
