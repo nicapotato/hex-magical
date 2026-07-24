@@ -16,7 +16,7 @@
 #include <string.h>
 
 #define WALL_THICKNESS 24.0f
-#define TILED_MAX_TILE_TYPES 256
+#define TILED_MAX_TILE_TYPES 512
 #define TILED_MAX_SHAPES_PER_TILE 4
 
 typedef struct TileCollisionShape

@@ -35,14 +35,27 @@ static PhysicsWorld physics = { 0 };
 // -v: print the ball position once per sim-second — trajectory at a glance
 static bool verbose = false;
 
-// Same candidate dirs as the game: repo root and beside the binary
+// Same candidate dirs as the game: repo root and beside the binary.
+// Solutions name their level by .tmx basename; maps live in act subfolders
+// (resources/act-1/map-2.tmx), so search the tree for a basename match.
 static bool FindLevelTmx(const char *levelFile, char *out, int outSize)
 {
     const char *dirs[] = { "resources", "../../resources" };
     for (int i = 0; i < 2; i++)
     {
-        snprintf(out, outSize, "%s/%s", dirs[i], levelFile);
-        if (FileExists(out)) return true;
+        if (!DirectoryExists(dirs[i])) continue;
+
+        FilePathList files = LoadDirectoryFilesEx(dirs[i], ".tmx", true);
+        bool found = false;
+        for (unsigned int f = 0; f < files.count; f++)
+        {
+            if (strcmp(GetFileName(files.paths[f]), levelFile) != 0) continue;
+            snprintf(out, outSize, "%s", files.paths[f]);
+            found = true;
+            break;
+        }
+        UnloadDirectoryFiles(files);
+        if (found) return true;
     }
     return false;
 }

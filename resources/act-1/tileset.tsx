@@ -141,7 +141,7 @@
  </tile>
  <wangsets>
   <wangset name="terrain-1" type="corner" tile="-1">
-   <wangcolor name="green" color="#ff0000" tile="-1" probability="1"/>
+   <wangcolor name="green" color="#00ed10" tile="-1" probability="1"/>
    <wangtile tileid="3" wangid="0,0,0,1,0,1,0,0"/>
    <wangtile tileid="6" wangid="0,1,0,0,0,1,0,1"/>
    <wangtile tileid="7" wangid="0,1,0,0,0,0,0,1"/>
@@ -152,7 +152,6 @@
    <wangtile tileid="17" wangid="0,0,0,0,0,1,0,1"/>
    <wangtile tileid="19" wangid="0,1,0,1,0,0,0,0"/>
    <wangtile tileid="25" wangid="0,1,0,0,0,0,0,1"/>
-   <wangtile tileid="26" wangid="0,0,0,0,0,0,0,1"/>
    <wangtile tileid="28" wangid="0,0,0,1,0,1,0,1"/>
    <wangtile tileid="29" wangid="0,0,0,1,0,1,0,0"/>
    <wangtile tileid="30" wangid="0,1,0,1,0,1,0,0"/>

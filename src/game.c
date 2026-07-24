@@ -46,7 +46,7 @@ static Vector2 viewPan = { 0.0f, 0.0f }; // camera target offset from level cent
 #define VIEW_ZOOM_RATE 1.5f // exponential zoom speed per second while +/- held
 #define VIEW_PAN_SPEED 480.0f // world pixels per second at 1x zoom
 
-#define MAX_TILED_LEVELS 30
+#define MAX_TILED_LEVELS 64
 static TiledLevel tiledLevels[MAX_TILED_LEVELS] = { 0 };
 static int tiledLevelCount = 0;
 static float tiledWatchTimer = 0.0f;
@@ -105,12 +105,14 @@ static int NaturalCompare(const char *a, const char *b)
     return (unsigned char)*a - (unsigned char)*b;
 }
 
-// Scan a resources dir for .tmx maps, sorted numerically for a stable level order
+// Scan a resources dir for .tmx maps (recursive: act-1/, act-2/, ... subfolders),
+// sorted numerically for a stable level order — act folders group naturally.
+// Each act folder carries its own tileset.tsx; rules/ holds automap inputs, not levels.
 static void LoadTiledLevels(const char *dir)
 {
     if (!DirectoryExists(dir)) return;
 
-    FilePathList files = LoadDirectoryFilesEx(dir, ".tmx", false);
+    FilePathList files = LoadDirectoryFilesEx(dir, ".tmx", true);
 
     // Insertion sort paths by name (LoadDirectoryFilesEx order is filesystem-dependent)
     for (unsigned int i = 1; i < files.count; i++)
@@ -127,6 +129,8 @@ static void LoadTiledLevels(const char *dir)
 
     for (unsigned int i = 0; (i < files.count) && (tiledLevelCount < MAX_TILED_LEVELS); i++)
     {
+        if (strstr(files.paths[i], "/rules/") != NULL) continue; // automap inputs, not levels
+
         // Fail loud to stderr: platform.c sets LOG_NONE in release, which would
         // otherwise swallow TiledLevelLoad TraceLog errors and silently skip maps.
         if (TiledLevelLoad(&tiledLevels[tiledLevelCount], files.paths[i]))

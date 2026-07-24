@@ -3,7 +3,7 @@
  <properties>
   <property name="DeleteTiles" type="bool" value="true"/>
  </properties>
- <tileset firstgid="1" source="../tileset.tsx"/>
+ <tileset firstgid="1" source="../act-1/tileset.tsx"/>
  <layer id="3" name="input_prototype" width="30" height="20" opacity="0.58">
   <data encoding="csv">
 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
