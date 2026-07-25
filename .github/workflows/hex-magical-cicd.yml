@@ -353,15 +353,32 @@ jobs:
           do
             if [ -f "$candidate" ]; then EXE="$candidate"; break; fi
           done
-          test -n "$EXE"
+          if [ -z "$EXE" ]; then
+            echo "Error: hex-magical.exe not found under build/"
+            find build -name 'hex-magical.exe' -print || true
+            exit 1
+          fi
           echo "Using binary: $EXE"
           rm -rf release
           mkdir -p release
           cp "$EXE" release/hex-magical.exe
-          test -d resources
+          if [ ! -d resources ]; then
+            echo "Error: resources/ directory missing"
+            exit 1
+          fi
           cp -R resources release/resources
-          test -f release/resources/map-2.tmx
-          test -f release/resources/solutions/map-2.solution
+          # Maps live under act-<n>/ after the act split (not resources/*.tmx)
+          for required in \
+            release/resources/act-1/map-2.tmx \
+            release/resources/solutions/map-2.solution
+          do
+            if [ ! -f "$required" ]; then
+              echo "Error: missing packaged file: $required"
+              ls -la release/resources/ || true
+              ls -la release/resources/act-1/ 2>/dev/null || true
+              exit 1
+            fi
+          done
           rm -f hex-magical-windows.zip
           7z a hex-magical-windows.zip ./release/*
           ls -la hex-magical-windows.zip

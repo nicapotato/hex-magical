@@ -81,7 +81,14 @@ package-windows: build
 	rm -rf release; \
 	mkdir -p release; \
 	cp "$$EXE" release/hex-magical.exe 2>/dev/null || cp "$$EXE" release/hex-magical; \
-	if [ -d resources ]; then cp -R resources release/resources; fi; \
+	if [ ! -d resources ]; then echo "Error: resources/ directory missing"; exit 1; fi; \
+	cp -R resources release/resources; \
+	if [ ! -f release/resources/act-1/map-2.tmx ]; then \
+		echo "Error: missing release/resources/act-1/map-2.tmx"; exit 1; \
+	fi; \
+	if [ ! -f release/resources/solutions/map-2.solution ]; then \
+		echo "Error: missing release/resources/solutions/map-2.solution"; exit 1; \
+	fi; \
 	rm -f hex-magical-windows.zip; \
 	cd release && zip -r ../hex-magical-windows.zip .; \
 	echo "✅ Package ready: hex-magical-windows.zip"
