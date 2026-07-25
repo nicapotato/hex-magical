@@ -33,11 +33,14 @@ void RenderCheckpointFlag(const PhysicsWorld *phys);
 // showPlayButton shows the START/STOP toggle; simulating selects its label.
 // checkpointSet relabels START to show the run resumes from the flag.
 void RenderHud(const char *levelName, int levelIndex, bool showTitle, bool showPlayButton,
-               bool simulating, bool debugMode, bool levelMenuOpen, bool checkpointSet, Vector2 uiMouse);
+               bool simulating, bool debugMode, bool levelMenuOpen, bool actMenuOpen,
+               bool checkpointSet, Vector2 uiMouse);
 Rectangle RenderGetStartButtonRect(void);
 Rectangle RenderGetDebugButtonRect(void);
 Rectangle RenderGetLevelMenuHeaderRect(void);
-Rectangle RenderGetLevelMenuItemRect(int index);
+Rectangle RenderGetLevelMenuItemRect(int index);   // slot within the current act
+Rectangle RenderGetActMenuHeaderRect(void);
+Rectangle RenderGetActMenuItemRect(int index);
 
 // Build tool bar (bottom-left, build phase only). `tools` lists the visible
 // tools in display order — zero-capacity resources are simply not in the list.

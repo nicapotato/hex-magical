@@ -15,7 +15,7 @@
         },
         "act-1/map-1.tmx": {
             "scale": 0.76,
-            "selectedLayer": 0,
+            "selectedLayer": 1,
             "viewCenter": {
                 "x": 434.2105263157895,
                 "y": 276.3157894736843
@@ -170,14 +170,11 @@
             "scaleInEditor": 3
         },
         "act-2/map-1.tmx": {
-            "expandedObjectLayers": [
-                2
-            ],
-            "scale": 0.75,
-            "selectedLayer": 0,
+            "scale": 1,
+            "selectedLayer": 1,
             "viewCenter": {
-                "x": 488,
-                "y": 340
+                "x": 424.5,
+                "y": 378
             }
         },
         "act-2/map-2.tmx": {
@@ -198,10 +195,18 @@
         },
         "act-2/map-4.tmx": {
             "scale": 0.7659374999999999,
-            "selectedLayer": 0,
+            "selectedLayer": 1,
             "viewCenter": {
                 "x": 480.45695634434935,
                 "y": 240.22847817217473
+            }
+        },
+        "act-2/map-5.tmx": {
+            "scale": 2,
+            "selectedLayer": 1,
+            "viewCenter": {
+                "x": 996.75,
+                "y": 317
             }
         },
         "act-2/map-mountain-01.tmx": {
@@ -237,6 +242,7 @@
             }
         },
         "act-2/tileset.tsx": {
+            "dynamicWrapping": false,
             "scaleInDock": 1,
             "scaleInEditor": 4
         },
@@ -244,6 +250,23 @@
             "dynamicWrapping": true,
             "scaleInDock": 1,
             "scaleInEditor": 1
+        },
+        "experimental/map-mountain-01.tmx": {
+            "expandedObjectLayers": [
+                3
+            ],
+            "scale": 1.5318749999999999,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 240.22847817217468,
+                "y": 159.93472052223584
+            }
+        },
+        "experimental/moebius-1-small.tsx": {
+            "dynamicWrapping": false
+        },
+        "experimental/tileset.tsx": {
+            "dynamicWrapping": true
         },
         "map-10.tmx": {
             "scale": 0.7659374999999999,

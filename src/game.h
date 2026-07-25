@@ -32,9 +32,19 @@ void GameInit(void);              // Load resources / initialize game state
 void GameUpdateDrawFrame(void);   // Update and draw one frame
 void GameUnload(void);            // Unload resources / free game state
 
-// Level registry: every Tiled .tmx map found in resources/
+// Level registry: every act-<n>/map-<m>.tmx map found in resources/
 int GameGetLevelCount(void);
 const char *GameGetLevelName(int index);
+
+// Act registry: distinct act-<n> folders holding the levels, ascending.
+// actIndex is a registry index (0..count-1); the act *number* is what the
+// folder is named (act-1 -> 1). GameGetActLevel maps a slot within an act
+// back to a global level index.
+int GameGetActCount(void);
+int GameGetActNumber(int actIndex);
+int GameGetLevelActIndex(int levelIndex);
+int GameGetActLevelCount(int actIndex);
+int GameGetActLevel(int actIndex, int slot);
 
 // Resources dir feeding the level registry. GameSetResourcesDir rescans the
 // new folder and swaps the registry; on failure (no loadable .tmx) the

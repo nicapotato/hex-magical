@@ -27,6 +27,16 @@ static void DrawCrayonPolyline(const Vector2 *points, int count, Color color, fl
 {
     if (count < 2) return;
 
+    // Black border first so strokes stay readable on busy backgrounds
+    const Color outline = { 0, 0, 0, 230 };
+    const float outlineThickness = thickness + 3.5f;
+    for (int i = 0; i < count - 1; i++)
+    {
+        DrawLineEx(points[i], points[i + 1], outlineThickness, outline);
+    }
+    DrawCircleV(points[0], outlineThickness * 0.5f, outline);
+    DrawCircleV(points[count - 1], outlineThickness * 0.5f, outline);
+
     // Waxy overdraw: slightly offset passes for a crayon look
     for (int pass = 0; pass < 3; pass++)
     {
@@ -240,6 +250,9 @@ void RenderBoostLines(const PhysicsWorld *phys)
     ink.a = 220;
     Color glow = BOOST_ORANGE;
     glow.a = 70;
+    const Color outline = { 0, 0, 0, 230 };
+    const float inkThickness = STROKE_PHYSICS_RADIUS * 2.0f;
+    const float outlineThickness = inkThickness + 3.5f;
 
     for (int l = 0; l < MAX_BOOST_LINES; l++)
     {
@@ -248,8 +261,12 @@ void RenderBoostLines(const PhysicsWorld *phys)
 
         for (int i = 0; i < line->pointCount - 1; i++)
         {
+            DrawLineEx(line->points[i], line->points[i + 1], outlineThickness, outline);
+        }
+        for (int i = 0; i < line->pointCount - 1; i++)
+        {
             DrawLineEx(line->points[i], line->points[i + 1], STROKE_PHYSICS_RADIUS * 2.8f, glow);
-            DrawLineEx(line->points[i], line->points[i + 1], STROKE_PHYSICS_RADIUS * 2.0f, ink);
+            DrawLineEx(line->points[i], line->points[i + 1], inkThickness, ink);
         }
     }
 }
@@ -381,11 +398,29 @@ Rectangle RenderGetStartButtonRect(void)
     return (Rectangle){ admin.x - 164.0f - 8.0f, 12.0f, 164.0f, 40.0f };
 }
 
-#define LEVEL_MENU_X 16.0f
+// Act dropdown sits left of the level dropdown in the top-left corner
+#define ACT_MENU_X 16.0f
+#define ACT_MENU_W 96.0f
+#define LEVEL_MENU_X (ACT_MENU_X + ACT_MENU_W + 8.0f)
 #define LEVEL_MENU_Y 8.0f
 #define LEVEL_MENU_W 230.0f
 #define LEVEL_MENU_HEADER_H 30.0f
 #define LEVEL_MENU_ROW_H 26.0f
+
+Rectangle RenderGetActMenuHeaderRect(void)
+{
+    return (Rectangle){ ACT_MENU_X, LEVEL_MENU_Y, ACT_MENU_W, LEVEL_MENU_HEADER_H };
+}
+
+Rectangle RenderGetActMenuItemRect(int index)
+{
+    return (Rectangle){
+        ACT_MENU_X,
+        LEVEL_MENU_Y + LEVEL_MENU_HEADER_H + (float)index * LEVEL_MENU_ROW_H,
+        ACT_MENU_W,
+        LEVEL_MENU_ROW_H
+    };
+}
 
 Rectangle RenderGetLevelMenuHeaderRect(void)
 {
@@ -402,30 +437,71 @@ Rectangle RenderGetLevelMenuItemRect(int index)
     };
 }
 
-static void DrawLevelMenu(const char *levelName, int levelIndex, bool open, Vector2 uiMouse)
+static void DrawActMenu(int actIndex, bool open, Vector2 uiMouse)
 {
-    Rectangle header = RenderGetLevelMenuHeaderRect();
+    Rectangle header = RenderGetActMenuHeaderRect();
     bool headerHover = CheckCollisionPointRec(uiMouse, header);
 
     DrawRectangleRec(header, headerHover ? (Color){ 235, 222, 190, 255 } : (Color){ 245, 236, 214, 235 });
     DrawRectangleLinesEx(header, 2.0f, INK_BROWN);
-    const char *label = TextFormat("Level %d: %s  %s", levelIndex + 1, levelName, open ? "^" : "v");
+    const char *label = TextFormat("Act %d  %s", GameGetActNumber(actIndex), open ? "^" : "v");
     DrawText(label, (int)header.x + 8, (int)header.y + 6, 18, INK_BROWN);
 
     if (!open) return;
 
-    for (int i = 0; i < GameGetLevelCount(); i++)
+    for (int i = 0; i < GameGetActCount(); i++)
     {
-        Rectangle item = RenderGetLevelMenuItemRect(i);
+        Rectangle item = RenderGetActMenuItemRect(i);
         bool hover = CheckCollisionPointRec(uiMouse, item);
-        bool current = (i == levelIndex);
+        bool current = (i == actIndex);
 
         Color fill = current ? (Color){ 210, 50, 50, 220 }
                    : hover ? (Color){ 235, 222, 190, 245 }
                    : (Color){ 245, 236, 214, 235 };
         DrawRectangleRec(item, fill);
         DrawRectangleLinesEx(item, 1.0f, CRAYON_BROWN);
-        DrawText(TextFormat("%d. %s", i + 1, GameGetLevelName(i)),
+        DrawText(TextFormat("Act %d", GameGetActNumber(i)),
+                 (int)item.x + 8, (int)item.y + 5, 16,
+                 current ? PAPER : INK_BROWN);
+    }
+}
+
+// Lists only the current act's levels — the act dropdown switches acts
+static void DrawLevelMenu(const char *levelName, int levelIndex, bool open, Vector2 uiMouse)
+{
+    int actIndex = GameGetLevelActIndex(levelIndex);
+    int actLevelCount = GameGetActLevelCount(actIndex);
+
+    // Position of the current level within its act (for the header label)
+    int levelSlot = 0;
+    for (int i = 0; i < actLevelCount; i++)
+    {
+        if (GameGetActLevel(actIndex, i) == levelIndex) { levelSlot = i; break; }
+    }
+
+    Rectangle header = RenderGetLevelMenuHeaderRect();
+    bool headerHover = CheckCollisionPointRec(uiMouse, header);
+
+    DrawRectangleRec(header, headerHover ? (Color){ 235, 222, 190, 255 } : (Color){ 245, 236, 214, 235 });
+    DrawRectangleLinesEx(header, 2.0f, INK_BROWN);
+    const char *label = TextFormat("Level %d: %s  %s", levelSlot + 1, levelName, open ? "^" : "v");
+    DrawText(label, (int)header.x + 8, (int)header.y + 6, 18, INK_BROWN);
+
+    if (!open) return;
+
+    for (int i = 0; i < actLevelCount; i++)
+    {
+        int level = GameGetActLevel(actIndex, i);
+        Rectangle item = RenderGetLevelMenuItemRect(i);
+        bool hover = CheckCollisionPointRec(uiMouse, item);
+        bool current = (level == levelIndex);
+
+        Color fill = current ? (Color){ 210, 50, 50, 220 }
+                   : hover ? (Color){ 235, 222, 190, 245 }
+                   : (Color){ 245, 236, 214, 235 };
+        DrawRectangleRec(item, fill);
+        DrawRectangleLinesEx(item, 1.0f, CRAYON_BROWN);
+        DrawText(TextFormat("%d. %s", i + 1, GameGetLevelName(level)),
                  (int)item.x + 8, (int)item.y + 5, 16,
                  current ? PAPER : INK_BROWN);
     }
@@ -475,7 +551,8 @@ static void DrawUiButton(Rectangle btn, const char *label, bool active, bool hov
 }
 
 void RenderHud(const char *levelName, int levelIndex, bool showTitle, bool showPlayButton,
-               bool simulating, bool debugMode, bool levelMenuOpen, bool checkpointSet, Vector2 uiMouse)
+               bool simulating, bool debugMode, bool levelMenuOpen, bool actMenuOpen,
+               bool checkpointSet, Vector2 uiMouse)
 {
     if (showTitle)
     {
@@ -519,7 +596,8 @@ void RenderHud(const char *levelName, int levelIndex, bool showTitle, bool showP
 
     DrawFpsIndicator();
 
-    // Drawn last so the open list overlaps the play field
+    // Drawn last so the open lists overlap the play field
+    DrawActMenu(GameGetLevelActIndex(levelIndex), actMenuOpen, uiMouse);
     DrawLevelMenu(levelName, levelIndex, levelMenuOpen, uiMouse);
 }
 

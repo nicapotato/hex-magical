@@ -616,13 +616,15 @@ static int BuildCustomTilePolygons(const int *gids, int w, int h,
 //----------------------------------------------------------------------------------
 // Tileset refs + tile animations
 //----------------------------------------------------------------------------------
+// Strip Tiled flip flags (top 3 bits) before resolving against firstgid ranges.
 static bool ResolveGid(const TiledTileset *tilesets, int tilesetCount, int gid,
                        int *outTsIndex, int *outLocalId)
 {
     if (gid <= 0) return false;
+    unsigned int raw = (unsigned int)gid & 0x1FFFFFFFu;
     for (int i = 0; i < tilesetCount; i++)
     {
-        int localId = gid - tilesets[i].firstGid;
+        int localId = (int)raw - tilesets[i].firstGid;
         if ((localId >= 0) && (localId < tilesets[i].tileCount))
         {
             *outTsIndex = i;
@@ -631,6 +633,58 @@ static bool ResolveGid(const TiledTileset *tilesets, int tilesetCount, int gid,
         }
     }
     return false;
+}
+
+// Resolve a tileset local id to the texture + source rect used for drawing.
+static bool TilesetTileSource(const TiledTileset *ts, int localId, int tileW, int tileH,
+                              Texture2D *outTex, Rectangle *outSrc)
+{
+    if ((localId < 0) || (localId >= ts->tileCount)) return false;
+
+    if (ts->imageCollection)
+    {
+        if (localId >= TILED_MAX_TILE_IMAGES) return false;
+        const TiledTileImage *img = &ts->tileImages[localId];
+        if (img->texture.id == 0) return false;
+        *outTex = img->texture;
+        *outSrc = (Rectangle){ 0, 0, (float)img->width, (float)img->height };
+        return true;
+    }
+
+    if ((ts->texture.id == 0) || (ts->columns <= 0)) return false;
+    *outTex = ts->texture;
+    *outSrc = (Rectangle){
+        (float)(localId % ts->columns) * (float)tileW,
+        (float)(localId / ts->columns) * (float)tileH,
+        (float)tileW, (float)tileH
+    };
+    return true;
+}
+
+// Gameplay object names must never be treated as decorative tile images.
+static bool IsGameplayObjectName(const char *name)
+{
+    if ((name == NULL) || (name[0] == '\0')) return false;
+    return (strcmp(name, "ball-spawn") == 0)
+        || (strcmp(name, "ball") == 0)
+        || (strcmp(name, "finish-line") == 0)
+        || (strcmp(name, "no-build") == 0)
+        || (strcmp(name, "pit") == 0)
+        || (strcmp(name, "boost") == 0)
+        || (strcmp(name, "anti-gravity") == 0);
+}
+
+static bool ParseQuotedAttr(const char *tag, const char *attr, char *out, size_t outSize)
+{
+    const char *end = strchr(tag, '>');
+    const char *p = strstr(tag, attr);
+    if ((p == NULL) || ((end != NULL) && (p > end))) return false;
+    p += strlen(attr);
+    const char *q = strchr(p, '"');
+    if ((q == NULL) || ((size_t)(q - p) >= outSize)) return false;
+    memcpy(out, p, (size_t)(q - p));
+    out[q - p] = '\0';
+    return true;
 }
 
 static bool ParseTilesetAnimations(const char *tsx, TiledTileset *tileset)
@@ -805,45 +859,116 @@ static bool LoadMapTilesets(const char *xml, const char *mapDir, TiledLevel *lvl
         bool ok = (tilesetTag != NULL)
             && ParseIntAttr(tilesetTag, " columns=\"", &ts->columns)
             && ParseIntAttr(tilesetTag, " tilecount=\"", &ts->tileCount)
-            && (ts->columns > 0)
+            && (ts->columns >= 0)
             && (ts->tileCount > 0)
             && (ts->tileCount <= TILED_MAX_TILE_TYPES);
 
-        if (ok) ok = ParseTilesetCollisions(tsx, collisions[lvl->tilesetCount], TILED_MAX_TILE_TYPES);
-        if (ok) ok = ParseTilesetAnimations(tsx, ts);
-
-        char imageName[128] = { 0 };
-        const char *img = strstr(tsx, "<image source=\"");
-        if (ok && (img != NULL))
+        ts->imageCollection = (ts->columns == 0);
+        if (ok && ts->imageCollection && (ts->tileCount > TILED_MAX_TILE_IMAGES))
         {
-            img += strlen("<image source=\"");
-            const char *q = strchr(img, '"');
-            if ((q != NULL) && ((size_t)(q - img) < sizeof(imageName)))
-            {
-                memcpy(imageName, img, (size_t)(q - img));
-            }
-            else ok = false;
+            TraceLog(LOG_ERROR, "TILED: image-collection tileset %s has %d tiles (max %d)",
+                     ts->tsxPath, ts->tileCount, TILED_MAX_TILE_IMAGES);
+            ok = false;
         }
-        else ok = false;
+
+        // Collection tilesets are decoration-only — clear the collision slot so a
+        // stale static entry from a previous load can never leak into terrain.
+        memset(collisions[lvl->tilesetCount], 0, sizeof(collisions[0]));
+        if (ok && !ts->imageCollection)
+        {
+            ok = ParseTilesetCollisions(tsx, collisions[lvl->tilesetCount], TILED_MAX_TILE_TYPES);
+            if (ok) ok = ParseTilesetAnimations(tsx, ts);
+        }
+
+        if (ok && ts->imageCollection)
+        {
+            // Each <tile id> carries its own <image source="...">.
+            const char *tileCursor = tsx;
+            while (ok && ((tileCursor = strstr(tileCursor, "<tile ")) != NULL))
+            {
+                int tileId = -1;
+                if (!ParseIntAttr(tileCursor, " id=\"", &tileId)
+                    || (tileId < 0) || (tileId >= ts->tileCount))
+                {
+                    TraceLog(LOG_ERROR, "TILED: image-collection tile has invalid id in %s",
+                             ts->tsxPath);
+                    ok = false;
+                    break;
+                }
+
+                const char *tileEnd = strstr(tileCursor, "</tile>");
+                const char *img = strstr(tileCursor, "<image source=\"");
+                if ((tileEnd == NULL) || (img == NULL) || (img >= tileEnd))
+                {
+                    // Self-closing tile with no image — skip (empty slot)
+                    tileCursor += strlen("<tile ");
+                    continue;
+                }
+
+                char imageName[128] = { 0 };
+                int imgW = 0, imgH = 0;
+                if (!ParseQuotedAttr(img, "source=\"", imageName, sizeof(imageName))
+                    || !ParseIntAttr(img, " width=\"", &imgW)
+                    || !ParseIntAttr(img, " height=\"", &imgH)
+                    || (imgW <= 0) || (imgH <= 0))
+                {
+                    TraceLog(LOG_ERROR, "TILED: malformed <image> on tile %d in %s",
+                             tileId, ts->tsxPath);
+                    ok = false;
+                    break;
+                }
+
+                char pngPath[512];
+                snprintf(pngPath, sizeof(pngPath), "%s/%s", GetDirectoryPath(ts->tsxPath), imageName);
+                TiledTileImage *slot = &ts->tileImages[tileId];
+                slot->width = imgW;
+                slot->height = imgH;
+                if (IsWindowReady())
+                {
+                    slot->texture = LoadTexture(pngPath);
+                    if (slot->texture.id == 0)
+                    {
+                        TraceLog(LOG_ERROR, "TILED: failed to load tile image %s", pngPath);
+                        ok = false;
+                        break;
+                    }
+                }
+
+                tileCursor = tileEnd + strlen("</tile>");
+            }
+        }
+        else if (ok)
+        {
+            char imageName[128] = { 0 };
+            const char *img = strstr(tsx, "<image source=\"");
+            if ((img == NULL) || !ParseQuotedAttr(img, "source=\"", imageName, sizeof(imageName)))
+            {
+                TraceLog(LOG_ERROR, "TILED: tileset %s has no atlas <image source>", ts->tsxPath);
+                ok = false;
+            }
+            else
+            {
+                char pngPath[512];
+                snprintf(pngPath, sizeof(pngPath), "%s/%s", GetDirectoryPath(ts->tsxPath), imageName);
+                if (IsWindowReady())
+                {
+                    ts->texture = LoadTexture(pngPath);
+                    if (ts->texture.id == 0)
+                    {
+                        TraceLog(LOG_ERROR, "TILED: failed to load tileset image %s", pngPath);
+                        ok = false;
+                    }
+                }
+            }
+        }
 
         UnloadFileText(tsx);
         if (!ok)
         {
             TraceLog(LOG_ERROR, "TILED: failed to parse %s", ts->tsxPath);
+            // Partial tile-image loads are cleaned up by the caller via UnloadLevelTilesets
+            lvl->tilesetCount++; // include this slot so unload walks it
             return false;
-        }
-
-        char pngPath[512];
-        snprintf(pngPath, sizeof(pngPath), "%s/%s", GetDirectoryPath(ts->tsxPath), imageName);
-
-        if (IsWindowReady())
-        {
-            ts->texture = LoadTexture(pngPath);
-            if (ts->texture.id == 0)
-            {
-                TraceLog(LOG_ERROR, "TILED: failed to load tileset image %s", pngPath);
-                return false;
-            }
         }
 
         ts->modTime = GetFileModTime(ts->tsxPath);
@@ -864,9 +989,232 @@ static void UnloadLevelTilesets(TiledLevel *lvl)
     if (!lvl->loaded) return;
     for (int i = 0; i < lvl->tilesetCount; i++)
     {
-        if (lvl->tilesets[i].texture.id != 0) UnloadTexture(lvl->tilesets[i].texture);
-        lvl->tilesets[i].texture = (Texture2D){ 0 };
+        TiledTileset *ts = &lvl->tilesets[i];
+        if (ts->texture.id != 0) UnloadTexture(ts->texture);
+        ts->texture = (Texture2D){ 0 };
+        if (ts->imageCollection)
+        {
+            for (int t = 0; t < ts->tileCount && t < TILED_MAX_TILE_IMAGES; t++)
+            {
+                if (ts->tileImages[t].texture.id != 0) UnloadTexture(ts->tileImages[t].texture);
+                ts->tileImages[t].texture = (Texture2D){ 0 };
+            }
+        }
     }
+}
+
+static void UnloadLevelDecors(TiledLevel *lvl)
+{
+    for (int i = 0; i < lvl->decorCount; i++)
+    {
+        if (lvl->decors[i].ownsTexture && (lvl->decors[i].texture.id != 0))
+        {
+            UnloadTexture(lvl->decors[i].texture);
+        }
+        lvl->decors[i].texture = (Texture2D){ 0 };
+        lvl->decors[i].ownsTexture = false;
+    }
+    lvl->decorCount = 0;
+}
+
+static bool PushDecor(TiledLevel *lvl, Texture2D texture, bool ownsTexture,
+                      Rectangle src, Rectangle dest, float parallaxX, float parallaxY,
+                      float opacity)
+{
+    if (lvl->decorCount >= TILED_MAX_DECORS)
+    {
+        TraceLog(LOG_ERROR, "TILED: more than %d background images/objects", TILED_MAX_DECORS);
+        if (ownsTexture && (texture.id != 0)) UnloadTexture(texture);
+        return false;
+    }
+    if (opacity < 0.0f) opacity = 0.0f;
+    if (opacity > 1.0f) opacity = 1.0f;
+    lvl->decors[lvl->decorCount++] = (TiledDecor){
+        .texture = texture,
+        .ownsTexture = ownsTexture,
+        .src = src,
+        .dest = dest,
+        .parallaxX = parallaxX,
+        .parallaxY = parallaxY,
+        .opacity = opacity,
+    };
+    return true;
+}
+
+// Tile objects (gid=) and imagelayers become decorative backgrounds.
+// Layer parallaxx/parallaxy from Tiled are preserved (default 1,1).
+static bool ParseBackgroundDecors(const char *xml, const char *mapDir, TiledLevel *lvl)
+{
+    lvl->decorCount = 0;
+    const char *p = xml;
+
+    while ((p = strstr(p, "<")) != NULL)
+    {
+        if (strncmp(p, "<objectgroup ", 13) == 0)
+        {
+            float parallaxX = 1.0f, parallaxY = 1.0f;
+            float layerOffX = 0.0f, layerOffY = 0.0f;
+            float layerOpacity = 1.0f;
+            ParseFloatAttr(p, " parallaxx=\"", &parallaxX);
+            ParseFloatAttr(p, " parallaxy=\"", &parallaxY);
+            ParseFloatAttr(p, " offsetx=\"", &layerOffX);
+            ParseFloatAttr(p, " offsety=\"", &layerOffY);
+            ParseFloatAttr(p, " opacity=\"", &layerOpacity);
+
+            const char *groupEnd = strstr(p, "</objectgroup>");
+            if (groupEnd == NULL)
+            {
+                TraceLog(LOG_ERROR, "TILED: unclosed <objectgroup>");
+                return false;
+            }
+
+            const char *obj = p;
+            while ((obj = strstr(obj, "<object ")) != NULL && obj < groupEnd)
+            {
+                const char *objEnd = ObjectEnd(obj);
+                if (objEnd == NULL || objEnd > groupEnd)
+                {
+                    TraceLog(LOG_ERROR, "TILED: malformed <object> inside objectgroup");
+                    return false;
+                }
+
+                // Only tile objects (gid) are decorative images.
+                int gid = 0;
+                if (!ParseIntAttr(obj, " gid=\"", &gid) || (gid <= 0))
+                {
+                    obj = objEnd;
+                    continue;
+                }
+
+                char name[64] = { 0 };
+                ParseQuotedAttr(obj, "name=\"", name, sizeof(name));
+                if (IsGameplayObjectName(name))
+                {
+                    obj = objEnd;
+                    continue;
+                }
+
+                float ox = 0.0f, oy = 0.0f, ow = 0.0f, oh = 0.0f;
+                float objOpacity = 1.0f;
+                if (!ParseFloatAttr(obj, " x=\"", &ox) || !ParseFloatAttr(obj, " y=\"", &oy)
+                    || !ParseFloatAttr(obj, " width=\"", &ow) || !ParseFloatAttr(obj, " height=\"", &oh)
+                    || (ow <= 0.0f) || (oh <= 0.0f))
+                {
+                    TraceLog(LOG_ERROR, "TILED: tile object missing x/y/width/height");
+                    return false;
+                }
+                ParseFloatAttr(obj, " opacity=\"", &objOpacity);
+
+                int tsIndex = -1, localId = -1;
+                if (!ResolveGid(lvl->tilesets, lvl->tilesetCount, gid, &tsIndex, &localId))
+                {
+                    TraceLog(LOG_ERROR, "TILED: tile object gid %d matches no tileset", gid);
+                    return false;
+                }
+
+                Texture2D tex = { 0 };
+                Rectangle src = { 0 };
+                if (!TilesetTileSource(&lvl->tilesets[tsIndex], localId,
+                                       lvl->tileWidth, lvl->tileHeight, &tex, &src))
+                {
+                    TraceLog(LOG_ERROR, "TILED: tile object gid %d has no drawable image", gid);
+                    return false;
+                }
+
+                // Tiled tile-object origin is bottom-left — convert to top-left dest.
+                Rectangle dest = {
+                    lvl->offset.x + (layerOffX + ox) * lvl->scale,
+                    lvl->offset.y + (layerOffY + oy - oh) * lvl->scale,
+                    ow * lvl->scale,
+                    oh * lvl->scale
+                };
+                if (!PushDecor(lvl, tex, false, src, dest, parallaxX, parallaxY,
+                               layerOpacity * objOpacity)) return false;
+                obj = objEnd;
+            }
+
+            p = groupEnd + strlen("</objectgroup>");
+            continue;
+        }
+
+        if (strncmp(p, "<imagelayer ", 12) == 0)
+        {
+            float parallaxX = 1.0f, parallaxY = 1.0f;
+            float layerOffX = 0.0f, layerOffY = 0.0f;
+            float layerOpacity = 1.0f;
+            ParseFloatAttr(p, " parallaxx=\"", &parallaxX);
+            ParseFloatAttr(p, " parallaxy=\"", &parallaxY);
+            ParseFloatAttr(p, " offsetx=\"", &layerOffX);
+            ParseFloatAttr(p, " offsety=\"", &layerOffY);
+            ParseFloatAttr(p, " opacity=\"", &layerOpacity);
+
+            const char *layerEnd = strstr(p, "</imagelayer>");
+            // Empty imagelayers may be self-closing: <imagelayer .../>
+            const char *tagEnd = strchr(p, '>');
+            bool selfClose = (tagEnd != NULL) && (tagEnd > p) && (*(tagEnd - 1) == '/');
+
+            if (selfClose)
+            {
+                // Empty image layer (e.g. act-1 map-3 "test") — ignore quietly.
+                p = tagEnd + 1;
+                continue;
+            }
+            if (layerEnd == NULL)
+            {
+                TraceLog(LOG_ERROR, "TILED: unclosed <imagelayer>");
+                return false;
+            }
+
+            const char *img = strstr(p, "<image source=\"");
+            if ((img == NULL) || (img >= layerEnd))
+            {
+                // Layer present but no image yet — ignore (authoring in progress)
+                p = layerEnd + strlen("</imagelayer>");
+                continue;
+            }
+
+            char imageName[128] = { 0 };
+            int imgW = 0, imgH = 0;
+            if (!ParseQuotedAttr(img, "source=\"", imageName, sizeof(imageName))
+                || !ParseIntAttr(img, " width=\"", &imgW)
+                || !ParseIntAttr(img, " height=\"", &imgH)
+                || (imgW <= 0) || (imgH <= 0))
+            {
+                TraceLog(LOG_ERROR, "TILED: malformed imagelayer <image>");
+                return false;
+            }
+
+            char pngPath[512];
+            snprintf(pngPath, sizeof(pngPath), "%s/%s", mapDir, imageName);
+
+            Texture2D tex = { 0 };
+            if (IsWindowReady())
+            {
+                tex = LoadTexture(pngPath);
+                if (tex.id == 0)
+                {
+                    TraceLog(LOG_ERROR, "TILED: failed to load imagelayer %s", pngPath);
+                    return false;
+                }
+            }
+
+            Rectangle src = { 0, 0, (float)imgW, (float)imgH };
+            Rectangle dest = {
+                lvl->offset.x + layerOffX * lvl->scale,
+                lvl->offset.y + layerOffY * lvl->scale,
+                (float)imgW * lvl->scale,
+                (float)imgH * lvl->scale
+            };
+            if (!PushDecor(lvl, tex, true, src, dest, parallaxX, parallaxY, layerOpacity)) return false;
+
+            p = layerEnd + strlen("</imagelayer>");
+            continue;
+        }
+
+        p++;
+    }
+
+    return true;
 }
 
 //----------------------------------------------------------------------------------
@@ -941,33 +1289,40 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     }
 
     // External tilesets listed on the map (supports multi-tileset maps like map-11).
-    const char *dir = GetDirectoryPath(tmxPath);
+    // Keep xml alive until backgrounds are parsed (tile objects + imagelayers).
+    // Copy the map dir: raylib's GetDirectoryPath returns a reused static buffer.
+    char mapDir[512];
+    snprintf(mapDir, sizeof(mapDir), "%s", GetDirectoryPath(tmxPath));
     static TileCollision tileCollisions[TILED_MAX_TILESETS][TILED_MAX_TILE_TYPES];
-    if (ok) ok = LoadMapTilesets(xml, dir, &tmp, tileCollisions);
-
-    UnloadFileText(xml);
-    if (!ok)
-    {
-        // LoadMapTilesets may have loaded some textures before failing.
-        tmp.loaded = true; // so UnloadLevelTilesets walks the partial list
-        UnloadLevelTilesets(&tmp);
-        return false;
-    }
+    if (ok) ok = LoadMapTilesets(xml, mapDir, &tmp, tileCollisions);
 
     // 1:1 with Tiled — map pixels are canvas pixels (no fit-to-screen shrink).
     // Offset centers the map on the design canvas; large maps extend past the
     // view and are navigated with WASD pan / +/- zoom.
     float mapPxW = (float)(tmp.mapWidth * tmp.tileWidth);
     float mapPxH = (float)(tmp.mapHeight * tmp.tileHeight);
-    tmp.scale = 1.0f;
-    tmp.offset = (Vector2){
-        ((float)GAME_SCREEN_WIDTH - mapPxW * tmp.scale) * 0.5f,
-        ((float)GAME_SCREEN_HEIGHT - mapPxH * tmp.scale) * 0.5f
-    };
+    if (ok)
+    {
+        tmp.scale = 1.0f;
+        tmp.offset = (Vector2){
+            ((float)GAME_SCREEN_WIDTH - mapPxW * tmp.scale) * 0.5f,
+            ((float)GAME_SCREEN_HEIGHT - mapPxH * tmp.scale) * 0.5f
+        };
+        // Ink budgets: authored in tile-widths, spent in canvas pixels
+        tmp.lineCapacity = lineCapacityTiles * (float)tmp.tileWidth * tmp.scale;
+        tmp.boostLineCapacity = boostLineCapacityTiles * (float)tmp.tileWidth * tmp.scale;
+        ok = ParseBackgroundDecors(xml, mapDir, &tmp);
+    }
 
-    // Ink budgets: authored in tile-widths, spent in canvas pixels
-    tmp.lineCapacity = lineCapacityTiles * (float)tmp.tileWidth * tmp.scale;
-    tmp.boostLineCapacity = boostLineCapacityTiles * (float)tmp.tileWidth * tmp.scale;
+    UnloadFileText(xml);
+    if (!ok)
+    {
+        // LoadMapTilesets / ParseBackgroundDecors may have loaded textures before failing.
+        tmp.loaded = true; // so UnloadLevelTilesets walks the partial list
+        UnloadLevelDecors(&tmp);
+        UnloadLevelTilesets(&tmp);
+        return false;
+    }
 
     static bool fullTileCollision[TILED_MAX_W * TILED_MAX_H];
     for (int i = 0; i < tileCount; i++)
@@ -991,6 +1346,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     if ((tmp.boxCount < 0) || (tmp.polygonCount < 0))
     {
         tmp.loaded = true;
+        UnloadLevelDecors(&tmp);
         UnloadLevelTilesets(&tmp);
         return false;
     }
@@ -998,6 +1354,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     {
         TraceLog(LOG_ERROR, "TILED: terrain layer has no tiles with TSX collision objects");
         tmp.loaded = true;
+        UnloadLevelDecors(&tmp);
         UnloadLevelTilesets(&tmp);
         return false;
     }
@@ -1021,7 +1378,8 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     MapZonesToCanvas(tmp.boosts, tmp.boostCount, tmp.scale, tmp.offset);
     MapGravityZonesToCanvas(tmp.antiGravity, tmp.antiGravityCount, tmp.scale, tmp.offset);
 
-    // Commit: replace previous state (textures already live in tmp.tilesets)
+    // Commit: replace previous state (textures already live in tmp)
+    UnloadLevelDecors(lvl);
     UnloadLevelTilesets(lvl);
     *lvl = tmp;
     lvl->modTime = GetFileModTime(tmxPath);
@@ -1059,6 +1417,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
 
 void TiledLevelUnload(TiledLevel *lvl)
 {
+    UnloadLevelDecors(lvl);
     UnloadLevelTilesets(lvl);
     lvl->loaded = false;
 }
@@ -1202,12 +1561,26 @@ static void DrawAntiGravityZones(const GravityZone *zones, int count)
     }
 }
 
-void RenderTiledLevel(const TiledLevel *lvl)
+void RenderTiledLevel(const TiledLevel *lvl, Vector2 viewPan)
 {
     if (!lvl->loaded) return;
 
     float tw = (float)lvl->tileWidth;
     float th = (float)lvl->tileHeight;
+
+    // Backgrounds first. Parallax: Mode2D already subtracts viewPan, so we add
+    // pan * (1 - factor) here — net motion is pan * factor (0 = screen-locked).
+    for (int i = 0; i < lvl->decorCount; i++)
+    {
+        const TiledDecor *d = &lvl->decors[i];
+        if (d->texture.id == 0) continue;
+        Rectangle dest = d->dest;
+        dest.x += viewPan.x * (1.0f - d->parallaxX);
+        dest.y += viewPan.y * (1.0f - d->parallaxY);
+        Color tint = WHITE;
+        tint.a = (unsigned char)(d->opacity * 255.0f + 0.5f);
+        DrawTexturePro(d->texture, d->src, dest, (Vector2){ 0, 0 }, 0.0f, tint);
+    }
 
     // Soft crayon fill under collision so solids read even where terrain art is sparse.
     // Last 4 boxes are the off-canvas boundary walls — skip them.
@@ -1242,20 +1615,17 @@ void RenderTiledLevel(const TiledLevel *lvl)
             if (!ResolveGid(lvl->tilesets, lvl->tilesetCount, gid, &tsIndex, &localId)) continue;
 
             const TiledTileset *ts = &lvl->tilesets[tsIndex];
-            if (ts->texture.id == 0) continue;
-
             int drawId = ResolveAnimatedLocalId(ts, localId, now);
-            Rectangle src = {
-                (float)(drawId % ts->columns) * tw,
-                (float)(drawId / ts->columns) * th,
-                tw, th
-            };
+            Texture2D tex = { 0 };
+            Rectangle src = { 0 };
+            if (!TilesetTileSource(ts, drawId, (int)tw, (int)th, &tex, &src)) continue;
+
             Rectangle dest = {
                 lvl->offset.x + (float)x * tw * lvl->scale,
                 lvl->offset.y + (float)y * th * lvl->scale,
                 tw * lvl->scale, th * lvl->scale
             };
-            DrawTexturePro(ts->texture, src, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
+            DrawTexturePro(tex, src, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
         }
     }
 

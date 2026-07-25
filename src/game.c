@@ -33,6 +33,7 @@ static PhysicsWorld physics = { 0 };
 static SketchState sketch = { 0 };
 static bool debugMode = false;
 static bool levelMenuOpen = false;
+static bool actMenuOpen = false;
 static bool pauseMenuOpen = false; // ESC menu: world frozen while open
 static bool winMenuShow = true; // false = admiring the finished run
 static bool winSolutionSaved = false;
@@ -50,6 +51,13 @@ static Vector2 viewPan = { 0.0f, 0.0f }; // camera target offset from level cent
 static TiledLevel tiledLevels[MAX_TILED_LEVELS] = { 0 };
 static int tiledLevelCount = 0;
 static float tiledWatchTimer = 0.0f;
+
+// Acts: levels live in resources/act-<n>/map-<m>.tmx — the act registry holds
+// the distinct act numbers found (ascending, since paths are naturally sorted).
+#define MAX_ACTS 16
+static int tiledLevelActs[MAX_TILED_LEVELS] = { 0 }; // act number per level slot
+static int actNumbers[MAX_ACTS] = { 0 };
+static int actCount = 0;
 
 // Which resources dir the shipped levels came from
 static char resourcesDir[256] = "resources";
@@ -83,6 +91,52 @@ const char *GameGetLevelName(int index)
     return GetLevelDef(index)->name;
 }
 
+int GameGetActCount(void)
+{
+    return actCount;
+}
+
+int GameGetActNumber(int actIndex)
+{
+    if ((actIndex < 0) || (actIndex >= actCount)) actIndex = 0;
+    return actNumbers[actIndex];
+}
+
+// Act registry index for a level (the registry always contains the level's act)
+int GameGetLevelActIndex(int index)
+{
+    if ((index < 0) || (index >= tiledLevelCount)) index = 0;
+    int act = tiledLevelActs[index];
+    for (int i = 0; i < actCount; i++)
+    {
+        if (actNumbers[i] == act) return i;
+    }
+    return 0;
+}
+
+int GameGetActLevelCount(int actIndex)
+{
+    int act = GameGetActNumber(actIndex);
+    int count = 0;
+    for (int i = 0; i < tiledLevelCount; i++)
+    {
+        if (tiledLevelActs[i] == act) count++;
+    }
+    return count;
+}
+
+int GameGetActLevel(int actIndex, int slot)
+{
+    int act = GameGetActNumber(actIndex);
+    for (int i = 0; i < tiledLevelCount; i++)
+    {
+        if (tiledLevelActs[i] != act) continue;
+        if (slot == 0) return i;
+        slot--;
+    }
+    return 0;
+}
+
 // Natural filename compare: digit runs compare as numbers, so map-2 < map-10.
 // Plain strcmp would order map-10/map-11/map-12 before map-2.
 static int NaturalCompare(const char *a, const char *b)
@@ -105,9 +159,48 @@ static int NaturalCompare(const char *a, const char *b)
     return (unsigned char)*a - (unsigned char)*b;
 }
 
-// Scan a resources dir for .tmx maps (recursive: act-1/, act-2/, ... subfolders),
+// Level path convention: <dir>/act-<n>/map-<m>.tmx. Returns the act number,
+// or -1 when the path is not a level (map-template.tmx, experimental/ maps,
+// rules/ automap inputs, ...).
+static int ParseActMapPath(const char *path)
+{
+    // Filename must be map-<digits>.tmx
+    const char *file = GetFileName(path);
+    if (strncmp(file, "map-", 4) != 0) return -1;
+    char *end = NULL;
+    strtol(file + 4, &end, 10);
+    if ((end == file + 4) || (strcmp(end, ".tmx") != 0)) return -1;
+
+    // Parent folder must be act-<digits>
+    if (file == path) return -1; // bare filename, no directory part
+    const char *slash = file - 1;
+    const char *parent = slash;
+    while ((parent > path) && (parent[-1] != '/')) parent--;
+    if (strncmp(parent, "act-", 4) != 0) return -1;
+    long actNum = strtol(parent + 4, &end, 10);
+    if ((end == parent + 4) || (end != slash)) return -1;
+
+    return (int)actNum;
+}
+
+static void RegisterAct(int act)
+{
+    for (int i = 0; i < actCount; i++)
+    {
+        if (actNumbers[i] == act) return;
+    }
+    if (actCount >= MAX_ACTS)
+    {
+        fprintf(stderr, "FATAL: more than %d act-<n> folders in resources\n", MAX_ACTS);
+        abort();
+    }
+    actNumbers[actCount++] = act;
+}
+
+// Scan a resources dir for levels — only act-<n>/map-<m>.tmx files count,
 // sorted numerically for a stable level order — act folders group naturally.
-// Each act folder carries its own tileset.tsx; rules/ holds automap inputs, not levels.
+// Each act folder carries its own tileset.tsx; anything off-convention
+// (map-template.tmx, experimental/, rules/ automap inputs) is ignored.
 static void LoadTiledLevels(const char *dir)
 {
     if (!DirectoryExists(dir)) return;
@@ -129,17 +222,26 @@ static void LoadTiledLevels(const char *dir)
 
     for (unsigned int i = 0; (i < files.count) && (tiledLevelCount < MAX_TILED_LEVELS); i++)
     {
-        if (strstr(files.paths[i], "/rules/") != NULL) continue; // automap inputs, not levels
+        int act = ParseActMapPath(files.paths[i]);
+        if (act < 0)
+        {
+            fprintf(stderr, "LEVEL: ignored %s (levels must be act-<n>/map-<m>.tmx)\n", files.paths[i]);
+            continue;
+        }
 
         // Fail loud to stderr: platform.c sets LOG_NONE in release, which would
         // otherwise swallow TiledLevelLoad TraceLog errors and silently skip maps.
         if (TiledLevelLoad(&tiledLevels[tiledLevelCount], files.paths[i]))
         {
-            fprintf(stderr, "LEVEL: loaded [%d] %s (%dx%d)\n",
+            tiledLevelActs[tiledLevelCount] = act;
+            RegisterAct(act);
+            fprintf(stderr, "LEVEL: loaded [%d] act-%d %s (%dx%d, %d bg)\n",
                     tiledLevelCount,
+                    act,
                     tiledLevels[tiledLevelCount].name,
                     tiledLevels[tiledLevelCount].mapWidth,
-                    tiledLevels[tiledLevelCount].mapHeight);
+                    tiledLevels[tiledLevelCount].mapHeight,
+                    tiledLevels[tiledLevelCount].decorCount);
             tiledLevelCount++;
         }
         else
@@ -365,6 +467,7 @@ bool GameSetResourcesDir(const char *dir)
 
     for (int i = 0; i < tiledLevelCount; i++) TiledLevelUnload(&tiledLevels[i]);
     tiledLevelCount = 0;
+    actCount = 0;
 
     LoadTiledLevels(dir);
     bool ok = (tiledLevelCount > 0);
@@ -408,6 +511,7 @@ static void QuitToTitle(void)
 {
     screen = SCREEN_TITLE;
     levelMenuOpen = false;
+    actMenuOpen = false;
     pauseMenuOpen = false;
     PhysicsShutdown(&physics);
 }
@@ -449,6 +553,7 @@ static bool IsUiClick(Vector2 uiMouse)
     if (CheckCollisionPointRec(uiMouse, RenderGetDebugButtonRect())) return true;
     if (CheckCollisionPointRec(uiMouse, AdminGetButtonRect())) return true;
     if (CheckCollisionPointRec(uiMouse, RenderGetLevelMenuHeaderRect())) return true;
+    if (CheckCollisionPointRec(uiMouse, RenderGetActMenuHeaderRect())) return true;
     if (CheckCollisionPointRec(uiMouse, RenderGetStartButtonRect())) return true;
 
     // Tool bar only exists during the build phase
@@ -533,6 +638,7 @@ void GameInit(void)
     levelIndex = 0;
     debugMode = false;
     levelMenuOpen = false;
+    actMenuOpen = false;
 }
 
 void GameUpdateDrawFrame(void)
@@ -624,7 +730,11 @@ void GameUpdateDrawFrame(void)
         // Layered like a proper pause: an open dropdown closes first.
         if ((screen == SCREEN_PLAYING) && IsKeyPressed(KEY_ESCAPE))
         {
-            if (levelMenuOpen) levelMenuOpen = false;
+            if (levelMenuOpen || actMenuOpen)
+            {
+                levelMenuOpen = false;
+                actMenuOpen = false;
+            }
             else pauseMenuOpen = !pauseMenuOpen;
         }
 
@@ -662,22 +772,48 @@ void GameUpdateDrawFrame(void)
                 lmbDown = false;
             }
 
-            // Levels dropdown
+            // Act + level dropdowns (only one open at a time)
             if (lmbPressed)
             {
-                if (CheckCollisionPointRec(uiMouse, RenderGetLevelMenuHeaderRect()))
+                if (CheckCollisionPointRec(uiMouse, RenderGetActMenuHeaderRect()))
+                {
+                    actMenuOpen = !actMenuOpen;
+                    levelMenuOpen = false;
+                    lmbPressed = false;
+                    lmbDown = false;
+                }
+                else if (CheckCollisionPointRec(uiMouse, RenderGetLevelMenuHeaderRect()))
                 {
                     levelMenuOpen = !levelMenuOpen;
+                    actMenuOpen = false;
+                    lmbPressed = false;
+                    lmbDown = false;
+                }
+                else if (actMenuOpen)
+                {
+                    for (int i = 0; i < GameGetActCount(); i++)
+                    {
+                        if (CheckCollisionPointRec(uiMouse, RenderGetActMenuItemRect(i)))
+                        {
+                            levelIndex = GameGetActLevel(i, 0); // first level of the act
+                            StartPlaying();
+                            break;
+                        }
+                    }
+                    // Any click while open closes the menu and is consumed
+                    actMenuOpen = false;
                     lmbPressed = false;
                     lmbDown = false;
                 }
                 else if (levelMenuOpen)
                 {
-                    for (int i = 0; i < GameGetLevelCount(); i++)
+                    // The list only shows the current act's levels
+                    int actIndex = GameGetLevelActIndex(levelIndex);
+                    for (int i = 0; i < GameGetActLevelCount(actIndex); i++)
                     {
                         if (CheckCollisionPointRec(uiMouse, RenderGetLevelMenuItemRect(i)))
                         {
-                            levelIndex = i;
+                            levelIndex = GameGetActLevel(actIndex, i);
                             StartPlaying();
                             break;
                         }
@@ -889,7 +1025,7 @@ void GameUpdateDrawFrame(void)
 
         if (screen == SCREEN_TITLE)
         {
-            RenderHud(NULL, 0, true, false, false, false, false, false, uiMouse);
+            RenderHud(NULL, 0, true, false, false, false, false, false, false, uiMouse);
         }
         else
         {
@@ -898,7 +1034,7 @@ void GameUpdateDrawFrame(void)
             bool building = !PhysicsIsSimulating(&physics);
 
             BeginMode2D(camera); // world space: pans/zooms, HUD below does not
-                RenderTiledLevel(GetTiledLevel(levelIndex)); // tile art + no-build overlay
+                RenderTiledLevel(GetTiledLevel(levelIndex), viewPan); // bg + tiles + zones
                 if (building) RenderGhostTrail(&physics);    // last run, build phase only
                 RenderBoostLines(&physics);
                 RenderPhysics(&physics);
@@ -917,7 +1053,7 @@ void GameUpdateDrawFrame(void)
 
             RenderHud(level->name, levelIndex, false, showPlayButton,
                       PhysicsIsSimulating(&physics), debugMode, levelMenuOpen,
-                      physics.checkpointSet, uiMouse);
+                      actMenuOpen, physics.checkpointSet, uiMouse);
             if ((screen == SCREEN_PLAYING) && building)
             {
                 BuildTool tools[TOOL_COUNT];
