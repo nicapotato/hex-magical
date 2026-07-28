@@ -170,18 +170,21 @@
             "scaleInEditor": 3
         },
         "act-2/map-1.tmx": {
+            "expandedObjectLayers": [
+                2
+            ],
             "scale": 1,
             "selectedLayer": 1,
             "viewCenter": {
-                "x": 424.5,
-                "y": 378
+                "x": 511.5,
+                "y": 363
             }
         },
         "act-2/map-2.tmx": {
             "scale": 0.7659374999999999,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 480.45695634434935,
+                "x": 423.6638106895146,
                 "y": 240.22847817217473
             }
         },
@@ -189,16 +192,19 @@
             "scale": 0.7659374999999999,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 480.45695634434935,
+                "x": 423.6638106895146,
                 "y": 240.22847817217473
             }
         },
         "act-2/map-4.tmx": {
-            "scale": 0.7659374999999999,
-            "selectedLayer": 1,
+            "expandedObjectLayers": [
+                2
+            ],
+            "scale": 2,
+            "selectedLayer": 0,
             "viewCenter": {
-                "x": 480.45695634434935,
-                "y": 240.22847817217473
+                "x": 392.75,
+                "y": 245.5
             }
         },
         "act-2/map-5.tmx": {
@@ -258,7 +264,7 @@
             "scale": 1.5318749999999999,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 240.22847817217468,
+                "x": 211.8319053447573,
                 "y": 159.93472052223584
             }
         },

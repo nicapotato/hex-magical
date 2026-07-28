@@ -1025,7 +1025,7 @@ void GameUpdateDrawFrame(void)
 
         if (screen == SCREEN_TITLE)
         {
-            RenderHud(NULL, 0, true, false, false, false, false, false, false, uiMouse);
+            RenderHud(0, true, false, false, false, false, false, false, uiMouse);
         }
         else
         {
@@ -1051,7 +1051,7 @@ void GameUpdateDrawFrame(void)
                 }
             EndMode2D();
 
-            RenderHud(level->name, levelIndex, false, showPlayButton,
+            RenderHud(levelIndex, false, showPlayButton,
                       PhysicsIsSimulating(&physics), debugMode, levelMenuOpen,
                       actMenuOpen, physics.checkpointSet, uiMouse);
             if ((screen == SCREEN_PLAYING) && building)

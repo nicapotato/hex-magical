@@ -26,7 +26,7 @@ LEVEL_TESTS ?= true
 
 clean:
 	rm -rf $(BUILD_DIR) $(WASM_BUILD_DIR) $(ITCH_DIR) $(ITCH_ZIP) \
-		$(APP_BUNDLE) hex-magical-macos.zip hex-magical-windows.zip release
+		$(APP_BUNDLE) hex-magical-macos-arm64.zip hex-magical-windows-x86_64.zip release
 	$(MAKE) -f Makefile.web clean
 
 build:
@@ -71,9 +71,9 @@ app-bundle: build
 	echo "✅ Created $(APP_BUNDLE)"
 
 package-macos: app-bundle
-	rm -f hex-magical-macos.zip
-	zip -r hex-magical-macos.zip $(APP_BUNDLE)
-	@echo "✅ Package ready: hex-magical-macos.zip"
+	rm -f hex-magical-macos-arm64.zip
+	zip -r hex-magical-macos-arm64.zip $(APP_BUNDLE)
+	@echo "✅ Package ready: hex-magical-macos-arm64.zip"
 
 package-windows: build
 	@EXE="$(resolve_binary)"; \
@@ -89,9 +89,9 @@ package-windows: build
 	if [ ! -f release/resources/solutions/map-2.solution ]; then \
 		echo "Error: missing release/resources/solutions/map-2.solution"; exit 1; \
 	fi; \
-	rm -f hex-magical-windows.zip; \
-	cd release && zip -r ../hex-magical-windows.zip .; \
-	echo "✅ Package ready: hex-magical-windows.zip"
+	rm -f hex-magical-windows-x86_64.zip; \
+	cd release && zip -r ../hex-magical-windows-x86_64.zip .; \
+	echo "✅ Package ready: hex-magical-windows-x86_64.zip"
 
 run-mac: build
 	@EXE="$(resolve_binary)"; \

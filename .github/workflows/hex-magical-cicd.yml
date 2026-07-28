@@ -14,7 +14,7 @@ on:
           - windows
           - all
       channel:
-        description: 'itch.io channel override; defaults per platform (web / osx / windows) if empty'
+        description: 'itch.io channel override; defaults per platform (web / osx / windows-x86-64) if empty'
         required: false
         default: ''
         type: string
@@ -260,7 +260,7 @@ jobs:
           set -euo pipefail
           echo "🔨 Building macOS via CMake (FetchContent raylib + box2d)..."
           make package-macos
-          ls -la hex-magical-macos.zip hex-magical.app/Contents/MacOS/
+          ls -la hex-magical-macos-arm64.zip hex-magical.app/Contents/MacOS/
 
       - name: Upload macOS zip artifact
         if: >-
@@ -270,8 +270,8 @@ jobs:
           startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
-          name: hex-magical-macos-zip
-          path: ${{ env.PROJECT_DIR }}/hex-magical-macos.zip
+          name: hex-magical-macos-arm64-zip
+          path: ${{ env.PROJECT_DIR }}/hex-magical-macos-arm64.zip
           if-no-files-found: error
 
       - name: Setup butler
@@ -295,10 +295,10 @@ jobs:
             echo "❌ Error: BUTLER_API_KEY secret is not set"
             exit 1
           fi
-          test -f hex-magical-macos.zip
+          test -f hex-magical-macos-arm64.zip
 
           echo "🚀 Pushing to itch.io ${{ env.ITCH_USER }}/${{ env.ITCH_GAME }}:${CHANNEL} @ ${VERSION}"
-          butler push hex-magical-macos.zip ${{ env.ITCH_USER }}/${{ env.ITCH_GAME }}:${CHANNEL} --userversion ${VERSION}
+          butler push hex-magical-macos-arm64.zip ${{ env.ITCH_USER }}/${{ env.ITCH_GAME }}:${CHANNEL} --userversion ${VERSION}
           echo "✅ Successfully pushed to itch.io!"
 
   build-and-push-windows:
@@ -379,9 +379,9 @@ jobs:
               exit 1
             fi
           done
-          rm -f hex-magical-windows.zip
-          7z a hex-magical-windows.zip ./release/*
-          ls -la hex-magical-windows.zip
+          rm -f hex-magical-windows-x86_64.zip
+          7z a hex-magical-windows-x86_64.zip ./release/*
+          ls -la hex-magical-windows-x86_64.zip
 
       - name: Upload Windows zip artifact
         if: >-
@@ -391,8 +391,8 @@ jobs:
           startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
-          name: hex-magical-windows-zip
-          path: ${{ env.PROJECT_DIR }}/hex-magical-windows.zip
+          name: hex-magical-windows-x86_64-zip
+          path: ${{ env.PROJECT_DIR }}/hex-magical-windows-x86_64.zip
           if-no-files-found: error
 
       - name: Setup butler
@@ -409,20 +409,20 @@ jobs:
         shell: pwsh
         run: |
           $CHANNEL = "${{ github.event.inputs.channel }}"
-          if ([string]::IsNullOrEmpty($CHANNEL)) { $CHANNEL = "windows" }
+          if ([string]::IsNullOrEmpty($CHANNEL)) { $CHANNEL = "windows-x86-64" }
           $VERSION = "${{ steps.version.outputs.version }}"
 
           if ([string]::IsNullOrEmpty($env:BUTLER_API_KEY)) {
             Write-Host "❌ Error: BUTLER_API_KEY secret is not set"
             exit 1
           }
-          if (-not (Test-Path "hex-magical-windows.zip")) {
+          if (-not (Test-Path "hex-magical-windows-x86_64.zip")) {
             Write-Host "❌ Error: ZIP file not found"
             exit 1
           }
 
           Write-Host "🚀 Pushing to itch.io..."
-          butler push hex-magical-windows.zip ${{ env.ITCH_USER }}/${{ env.ITCH_GAME }}:$CHANNEL --userversion $VERSION
+          butler push hex-magical-windows-x86_64.zip ${{ env.ITCH_USER }}/${{ env.ITCH_GAME }}:$CHANNEL --userversion $VERSION
           Write-Host "✅ Successfully pushed to itch.io!"
 
   publish-s3:
@@ -472,19 +472,19 @@ jobs:
           CATALOG_KEY="${CATEGORY}/${MATURITY}/catalog.json"
 
           WZIP="dist/hex-magical-wasm-zip/hex-magical_wasm.zip"
-          MZIP="dist/hex-magical-macos-zip/hex-magical-macos.zip"
-          WINZIP="dist/hex-magical-windows-zip/hex-magical-windows.zip"
+          MZIP="dist/hex-magical-macos-arm64-zip/hex-magical-macos-arm64.zip"
+          WINZIP="dist/hex-magical-windows-x86_64-zip/hex-magical-windows-x86_64.zip"
           WDIR="dist/hex-magical-wasm-exploded"
 
           test -f "$WZIP" && test -f "$MZIP" && test -f "$WINZIP" && test -d "$WDIR"
 
           aws s3 cp "$WZIP" "s3://${BUCKET}/${PREFIX}/hex-magical-wasm.zip"
-          aws s3 cp "$MZIP" "s3://${BUCKET}/${PREFIX}/hex-magical-macos.zip"
-          aws s3 cp "$WINZIP" "s3://${BUCKET}/${PREFIX}/hex-magical-windows.zip"
+          aws s3 cp "$MZIP" "s3://${BUCKET}/${PREFIX}/hex-magical-macos-arm64.zip"
+          aws s3 cp "$WINZIP" "s3://${BUCKET}/${PREFIX}/hex-magical-windows-x86_64.zip"
 
           sha256sum "$WZIP" | awk '{print $1 "  hex-magical-wasm.zip"}' | aws s3 cp - "s3://${BUCKET}/${PREFIX}/hex-magical-wasm.zip.sha256" --content-type text/plain
-          sha256sum "$MZIP" | awk '{print $1 "  hex-magical-macos.zip"}' | aws s3 cp - "s3://${BUCKET}/${PREFIX}/hex-magical-macos.zip.sha256" --content-type text/plain
-          sha256sum "$WINZIP" | awk '{print $1 "  hex-magical-windows.zip"}' | aws s3 cp - "s3://${BUCKET}/${PREFIX}/hex-magical-windows.zip.sha256" --content-type text/plain
+          sha256sum "$MZIP" | awk '{print $1 "  hex-magical-macos-arm64.zip"}' | aws s3 cp - "s3://${BUCKET}/${PREFIX}/hex-magical-macos-arm64.zip.sha256" --content-type text/plain
+          sha256sum "$WINZIP" | awk '{print $1 "  hex-magical-windows-x86_64.zip"}' | aws s3 cp - "s3://${BUCKET}/${PREFIX}/hex-magical-windows-x86_64.zip.sha256" --content-type text/plain
 
           cd "$WDIR"
           find . -type f | while IFS= read -r f; do
@@ -518,18 +518,21 @@ jobs:
             --arg ih "${{ env.S3_IFRAME_HEIGHT }}" \
             --arg wasm_zip "${BASE}/${PREFIX}/hex-magical-wasm.zip" \
             --arg sha_wasm "$SHA_W" \
-            --arg mac_zip "${BASE}/${PREFIX}/hex-magical-macos.zip" \
+            --arg size_wasm "$(stat -c%s "$WZIP")" \
+            --arg mac_zip "${BASE}/${PREFIX}/hex-magical-macos-arm64.zip" \
             --arg sha_mac "$SHA_M" \
-            --arg win_zip "${BASE}/${PREFIX}/hex-magical-windows.zip" \
+            --arg size_mac "$(stat -c%s "$MZIP")" \
+            --arg win_zip "${BASE}/${PREFIX}/hex-magical-windows-x86_64.zip" \
             --arg sha_win "$SHA_WIN" \
+            --arg size_win "$(stat -c%s "$WINZIP")" \
             --arg play_wasm "${BASE}/${PREFIX}/wasm/index.html" \
             '{
               released_at: $released,
               iframe: {width: ($iw | tonumber), height: ($ih | tonumber)},
               platforms: {
-                wasm: {zip_url: $wasm_zip, sha256: $sha_wasm, play_url: $play_wasm},
-                macos: {zip_url: $mac_zip, sha256: $sha_mac},
-                windows: {zip_url: $win_zip, sha256: $sha_win}
+                wasm: {zip_url: $wasm_zip, sha256: $sha_wasm, size_bytes: ($size_wasm|tonumber), play_url: $play_wasm},
+                macos_arm64: {zip_url: $mac_zip, sha256: $sha_mac, size_bytes: ($size_mac|tonumber)},
+                windows_x86_64: {zip_url: $win_zip, sha256: $sha_win, size_bytes: ($size_win|tonumber)}
               }
             }')
 
@@ -599,8 +602,8 @@ jobs:
           set -euo pipefail
           mkdir -p release-assets
           WZIP="dist/hex-magical-wasm-zip/hex-magical_wasm.zip"
-          MZIP="dist/hex-magical-macos-zip/hex-magical-macos.zip"
-          WINZIP="dist/hex-magical-windows-zip/hex-magical-windows.zip"
+          MZIP="dist/hex-magical-macos-arm64-zip/hex-magical-macos-arm64.zip"
+          WINZIP="dist/hex-magical-windows-x86_64-zip/hex-magical-windows-x86_64.zip"
           DL_BODY="## Downloads"
 
           if [ -f "$WZIP" ]; then
@@ -616,8 +619,8 @@ jobs:
           if [ -f "$MZIP" ]; then
             cp "$MZIP" release-assets/
             S=$(sha256sum "$MZIP" | awk '{print $1}')
-            printf '%s  hex-magical-macos.zip\n' "$S" > release-assets/hex-magical-macos.zip.sha256
-            DL_BODY="${DL_BODY}"$'\n'"- **macOS:** \`hex-magical-macos.zip\` (\`${S}\`)"
+            printf '%s  hex-magical-macos-arm64.zip\n' "$S" > release-assets/hex-magical-macos-arm64.zip.sha256
+            DL_BODY="${DL_BODY}"$'\n'"- **macOS:** \`hex-magical-macos-arm64.zip\` (\`${S}\`)"
             echo "macos=passing" >> "$GITHUB_OUTPUT"
           else
             echo "macos=skipped" >> "$GITHUB_OUTPUT"
@@ -626,16 +629,16 @@ jobs:
           if [ -f "$WINZIP" ]; then
             cp "$WINZIP" release-assets/
             S=$(sha256sum "$WINZIP" | awk '{print $1}')
-            printf '%s  hex-magical-windows.zip\n' "$S" > release-assets/hex-magical-windows.zip.sha256
-            DL_BODY="${DL_BODY}"$'\n'"- **Windows x64:** \`hex-magical-windows.zip\` (\`${S}\`)"
+            printf '%s  hex-magical-windows-x86_64.zip\n' "$S" > release-assets/hex-magical-windows-x86_64.zip.sha256
+            DL_BODY="${DL_BODY}"$'\n'"- **Windows x64:** \`hex-magical-windows-x86_64.zip\` (\`${S}\`)"
             echo "windows=passing" >> "$GITHUB_OUTPUT"
           else
             echo "windows=skipped" >> "$GITHUB_OUTPUT"
           fi
 
           if [ ! -f release-assets/hex-magical_wasm.zip ] && \
-             [ ! -f release-assets/hex-magical-macos.zip ] && \
-             [ ! -f release-assets/hex-magical-windows.zip ]; then
+             [ ! -f release-assets/hex-magical-macos-arm64.zip ] && \
+             [ ! -f release-assets/hex-magical-windows-x86_64.zip ]; then
             echo "❌ No release artifacts found"
             exit 1
           fi
@@ -711,8 +714,8 @@ jobs:
 
           rows = [
               ("Web (WASM)", "Web WASM", "web wasm", "hex-magical_wasm.zip"),
-              ("macOS", "macOS", "macos", "hex-magical-macos.zip"),
-              ("Windows x64", "Windows x64", "windows x64", "hex-magical-windows.zip"),
+              ("macOS", "macOS", "macos", "hex-magical-macos-arm64.zip"),
+              ("Windows x64", "Windows x64", "windows x64", "hex-magical-windows-x86_64.zip"),
           ]
           for platform, alt, label, artifact in rows:
               badge = static_badge(label, statuses[label])

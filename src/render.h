@@ -32,7 +32,7 @@ void RenderCheckpointFlag(const PhysicsWorld *phys);
 // uiMouse is the mouse position in game-canvas coordinates (letterbox-corrected).
 // showPlayButton shows the START/STOP toggle; simulating selects its label.
 // checkpointSet relabels START to show the run resumes from the flag.
-void RenderHud(const char *levelName, int levelIndex, bool showTitle, bool showPlayButton,
+void RenderHud(int levelIndex, bool showTitle, bool showPlayButton,
                bool simulating, bool debugMode, bool levelMenuOpen, bool actMenuOpen,
                bool checkpointSet, Vector2 uiMouse);
 Rectangle RenderGetStartButtonRect(void);

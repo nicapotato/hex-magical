@@ -403,7 +403,7 @@ Rectangle RenderGetStartButtonRect(void)
 #define ACT_MENU_W 96.0f
 #define LEVEL_MENU_X (ACT_MENU_X + ACT_MENU_W + 8.0f)
 #define LEVEL_MENU_Y 8.0f
-#define LEVEL_MENU_W 230.0f
+#define LEVEL_MENU_W 110.0f
 #define LEVEL_MENU_HEADER_H 30.0f
 #define LEVEL_MENU_ROW_H 26.0f
 
@@ -467,7 +467,7 @@ static void DrawActMenu(int actIndex, bool open, Vector2 uiMouse)
 }
 
 // Lists only the current act's levels — the act dropdown switches acts
-static void DrawLevelMenu(const char *levelName, int levelIndex, bool open, Vector2 uiMouse)
+static void DrawLevelMenu(int levelIndex, bool open, Vector2 uiMouse)
 {
     int actIndex = GameGetLevelActIndex(levelIndex);
     int actLevelCount = GameGetActLevelCount(actIndex);
@@ -484,7 +484,7 @@ static void DrawLevelMenu(const char *levelName, int levelIndex, bool open, Vect
 
     DrawRectangleRec(header, headerHover ? (Color){ 235, 222, 190, 255 } : (Color){ 245, 236, 214, 235 });
     DrawRectangleLinesEx(header, 2.0f, INK_BROWN);
-    const char *label = TextFormat("Level %d: %s  %s", levelSlot + 1, levelName, open ? "^" : "v");
+    const char *label = TextFormat("Map %d  %s", levelSlot + 1, open ? "^" : "v");
     DrawText(label, (int)header.x + 8, (int)header.y + 6, 18, INK_BROWN);
 
     if (!open) return;
@@ -501,7 +501,7 @@ static void DrawLevelMenu(const char *levelName, int levelIndex, bool open, Vect
                    : (Color){ 245, 236, 214, 235 };
         DrawRectangleRec(item, fill);
         DrawRectangleLinesEx(item, 1.0f, CRAYON_BROWN);
-        DrawText(TextFormat("%d. %s", i + 1, GameGetLevelName(level)),
+        DrawText(TextFormat("Map %d", i + 1),
                  (int)item.x + 8, (int)item.y + 5, 16,
                  current ? PAPER : INK_BROWN);
     }
@@ -550,7 +550,7 @@ static void DrawUiButton(Rectangle btn, const char *label, bool active, bool hov
     DrawText(label, (int)btn.x + ((int)btn.width - tw) / 2, (int)btn.y + 11, 18, text);
 }
 
-void RenderHud(const char *levelName, int levelIndex, bool showTitle, bool showPlayButton,
+void RenderHud(int levelIndex, bool showTitle, bool showPlayButton,
                bool simulating, bool debugMode, bool levelMenuOpen, bool actMenuOpen,
                bool checkpointSet, Vector2 uiMouse)
 {
@@ -598,7 +598,7 @@ void RenderHud(const char *levelName, int levelIndex, bool showTitle, bool showP
 
     // Drawn last so the open lists overlap the play field
     DrawActMenu(GameGetLevelActIndex(levelIndex), actMenuOpen, uiMouse);
-    DrawLevelMenu(levelName, levelIndex, levelMenuOpen, uiMouse);
+    DrawLevelMenu(levelIndex, levelMenuOpen, uiMouse);
 }
 
 //----------------------------------------------------------------------------------

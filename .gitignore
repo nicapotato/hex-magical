@@ -68,9 +68,7 @@ compile_commands.json
 build*
 bin/
 external/
-hex-magical/
-hex-magical.zip
-hex-magical-macos.zip
+hex-magical*
 resources.zip
 
 # Android files
