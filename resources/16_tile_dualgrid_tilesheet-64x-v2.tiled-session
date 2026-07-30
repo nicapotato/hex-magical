@@ -1,0 +1,168 @@
+{
+    "activeFile": "act-2/map-9.tmx",
+    "expandedProjectPaths": [
+        ".",
+        "act-3",
+        "act-2",
+        "act-1"
+    ],
+    "fileStates": {
+        "16_tile_dualgrid_tilesheet-64x-v2.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 4
+        },
+        ":/automap-tiles.tsx": {
+            "scaleInDock": 1
+        },
+        "act-1/map-17.tmx": {
+            "scale": 0.6778645833333332,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 422.6507875528237,
+                "y": 240.46100653092586
+            }
+        },
+        "act-1/map-2.tmx": {
+            "scale": 0.8134374999999999,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 352.20898962735305,
+                "y": 346.6769112562429
+            }
+        },
+        "act-1/tileset.tsx": {
+            "scaleInDock": 1
+        },
+        "act-2/cave.tsx": {
+            "dynamicWrapping": true,
+            "scaleInDock": 1
+        },
+        "act-2/map-1.tmx": {
+            "scale": 0.7238,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 358.5244542691351,
+                "y": 342.63608731693836
+            }
+        },
+        "act-2/map-2.tmx": {
+            "scale": 0.6778645833333332,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 422.6507875528237,
+                "y": 240.46100653092594
+            }
+        },
+        "act-2/map-3.tmx": {
+            "expandedObjectLayers": [
+                2
+            ],
+            "scale": 0.5,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 261,
+                "y": 278
+            }
+        },
+        "act-2/map-4.tmx": {
+            "scale": 0.6778645833333332,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 422.6507875528237,
+                "y": 240.46100653092594
+            }
+        },
+        "act-2/map-5.tmx": {
+            "scale": 1.5,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 141.66666666666669,
+                "y": 240
+            }
+        },
+        "act-2/map-6.tmx": {
+            "expandedObjectLayers": [
+                2
+            ],
+            "scale": 0.5,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 459,
+                "y": 624
+            }
+        },
+        "act-2/map-7.tmx": {
+            "scale": 0.6006770833333334,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 480.29133789993926,
+                "y": 479.45894390011273
+            }
+        },
+        "act-2/map-8.tmx": {
+            "scale": 0.5,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 479,
+                "y": 479
+            }
+        },
+        "act-2/map-9.tmx": {
+            "scale": 0.6006770833333334,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 480.2913378999393,
+                "y": 470.30260990202027
+            }
+        },
+        "act-2/tileset.tsx": {
+            "scaleInDock": 1
+        },
+        "act-3/map-1.tmx": {
+            "scale": 0.5,
+            "selectedLayer": 2,
+            "viewCenter": {
+                "x": 479,
+                "y": 240
+            }
+        },
+        "act-3/tileset.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 4
+        },
+        "background/images.tsx": {
+            "scaleInDock": 1
+        },
+        "experimental/16_tile_dualgrid_tilesheet-64x.tsx": {
+            "scaleInDock": 1
+        },
+        "experimental/5tileset-dualgrid-1.tsx": {
+            "scaleInDock": 1
+        },
+        "experimental/moebius-1-small.tsx": {
+            "dynamicWrapping": false,
+            "scaleInDock": 1
+        }
+    },
+    "last.imagePath": "/Users/nicapotato/Documents/repo/games/hex-magical/resources",
+    "openFiles": [
+        "act-2/map-9.tmx",
+        "act-2/map-8.tmx"
+    ],
+    "project": "16_tile_dualgrid_tilesheet-64x-v2.tiled-project",
+    "recentFiles": [
+        "act-2/map-8.tmx",
+        "act-2/map-9.tmx",
+        "act-2/map-7.tmx",
+        "act-2/map-6.tmx",
+        "act-2/map-5.tmx",
+        "act-2/map-4.tmx",
+        "act-1/map-2.tmx",
+        "act-1/map-17.tmx",
+        "act-2/map-3.tmx",
+        "act-2/map-2.tmx",
+        "act-2/map-1.tmx",
+        "act-3/tileset.tsx"
+    ],
+    "tileset.lastUsedFormat": "tsx"
+}

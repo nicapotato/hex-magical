@@ -7,7 +7,7 @@
  </properties>
  <tileset firstgid="1" source="tileset.tsx"/>
  <tileset firstgid="289" source="../background/images.tsx"/>
- <objectgroup id="2" name="game" visible="0" opacity="0.37">
+ <objectgroup id="2" name="game" opacity="0.37">
   <object id="2" name="finish-line" x="825.515" y="18.2982">
    <polygon points="0,0 -5.51514,105.702 115.818,105.702 115.818,-2.29788"/>
   </object>

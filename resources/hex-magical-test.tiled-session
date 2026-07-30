@@ -1,9 +1,13 @@
 {
-    "activeFile": "act-2/overworld-01.tmx",
+    "activeFile": "experimental/16_tile_dualgrid_tilesheet-64x.tsx",
     "expandedProjectPaths": [
+        "background",
         ".",
-        "act-2",
-        "tilesets"
+        "tilesets",
+        "act-3",
+        "act-1",
+        "experimental",
+        "act-2"
     ],
     "file.lastUsedOpenFilter": "All Files (*)",
     "fileStates": {
@@ -17,7 +21,7 @@
             "scale": 0.76,
             "selectedLayer": 1,
             "viewCenter": {
-                "x": 434.2105263157895,
+                "x": 376.97368421052636,
                 "y": 276.3157894736843
             }
         },
@@ -176,8 +180,8 @@
             "scale": 1,
             "selectedLayer": 1,
             "viewCenter": {
-                "x": 511.5,
-                "y": 363
+                "x": 147.5,
+                "y": 399
             }
         },
         "act-2/map-2.tmx": {
@@ -250,12 +254,47 @@
         "act-2/tileset.tsx": {
             "dynamicWrapping": false,
             "scaleInDock": 1,
-            "scaleInEditor": 4
+            "scaleInEditor": 2
+        },
+        "act-3/map-1.tmx": {
+            "scale": 1.5,
+            "selectedLayer": 1,
+            "viewCenter": {
+                "x": 194.33333333333334,
+                "y": 290
+            }
+        },
+        "act-3/tileset.tsx": {
+            "scaleInDock": 1
         },
         "background/images.tsx": {
             "dynamicWrapping": true,
             "scaleInDock": 1,
             "scaleInEditor": 1
+        },
+        "experimental/16_tile_dualgrid_tilesheet-64x.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 3
+        },
+        "experimental/5tileset-dualgrid-1.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 5.5
+        },
+        "experimental/bricks-small.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "experimental/cave-02.tmx": {
+            "scale": 1.3596875,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 240.12870604458746,
+                "y": 160.3309584003677
+            }
+        },
+        "experimental/cave.tsx": {
+            "dynamicWrapping": false,
+            "scaleInDock": 1
         },
         "experimental/map-mountain-01.tmx": {
             "expandedObjectLayers": [
@@ -268,11 +307,26 @@
                 "y": 159.93472052223584
             }
         },
+        "experimental/mixed-set-1-small.tsx": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
         "experimental/moebius-1-small.tsx": {
-            "dynamicWrapping": false
+            "dynamicWrapping": false,
+            "scaleInDock": 1,
+            "scaleInEditor": 4
+        },
+        "experimental/overworld-01.tmx": {
+            "scale": 0.8158124999999999,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 400.21451007431244,
+                "y": 160.57611277101051
+            }
         },
         "experimental/tileset.tsx": {
-            "dynamicWrapping": true
+            "dynamicWrapping": true,
+            "scaleInDock": 1
         },
         "map-10.tmx": {
             "scale": 0.7659374999999999,
@@ -441,36 +495,34 @@
             "scaleInEditor": 5.5
         }
     },
-    "last.imagePath": "/Users/nicapotato/Documents/repo/games/hex-magical/resources/tilesets",
+    "last.imagePath": "/Users/nicapotato/Documents/repo/games/hex-magical/resources",
     "map.lastUsedFormat": "tmx",
     "map.tileHeight": 16,
     "map.tileWidth": 16,
     "openFiles": [
-        "act-2/overworld-01.tmx",
-        "act-2/tileset.tsx",
-        "act-1/tileset.tsx",
-        "act-1/map-16.tmx"
+        "experimental/16_tile_dualgrid_tilesheet-64x.tsx",
+        "act-3/map-1.tmx"
     ],
     "project": "hex-magical-test.tiled-project",
     "property.type": "float",
     "recentFiles": [
-        "act-2/map-3.tmx",
-        "act-2/tileset.tsx",
+        "experimental/16_tile_dualgrid_tilesheet-64x.tsx",
+        "act-3/map-1.tmx",
+        "experimental/5tileset-dualgrid-1.tsx",
+        "experimental/overworld-01.tmx",
+        "experimental/mixed-set-1-small.tsx",
+        "experimental/cave-02.tmx",
+        "experimental/bricks-small.tsx",
+        "act-2/map-5.tmx",
+        "experimental/moebius-1-small.tsx",
         "act-2/map-4.tmx",
-        "act-2/overworld-01.tmx",
-        "act-1/map-1.tmx",
-        "act-1/map-2.tmx",
-        "act-2/cave.tsx",
-        "act-2/moebius-1-small.tsx",
-        "act-2/mixed-set-1-small.tsx",
-        "act-2/map-mountain-01.tmx",
-        "act-2/bricks-small.tsx",
-        "act-1/map-14.tmx"
+        "experimental/map-mountain-01.tmx",
+        "background/images.tsx"
     ],
     "tileset.lastUsedFormat": "tsx",
     "tileset.tileSize": {
-        "height": 16,
-        "width": 16
+        "height": 32,
+        "width": 32
     },
     "tileset.type": 0
 }
