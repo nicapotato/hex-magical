@@ -12,6 +12,7 @@
 #include "raylib.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #define MAX_DRAWN_BODIES 64
 #define MAX_STROKE_POINTS 256
@@ -21,12 +22,20 @@
 #define STROKE_PHYSICS_RADIUS 5.0f
 // Static track is cheap — allow one capsule per smoothed stroke segment
 #define MAX_STROKE_CAPSULES (MAX_STROKE_POINTS - 1)
+#define MAX_STROKE_SEGS MAX_STROKE_CAPSULES
 
-#define MAX_BOOST_LINES 16
 #define MAX_CANNONS 8
 
-// Boost lines amplify the ball's current velocity while nearby (no steering)
+// Boosted segments amplify the ball's current velocity while nearby (no steering)
 #define BOOST_LINE_RADIUS 30.0f
+// Brush radius when painting / unpainting boost on existing crayon strokes
+#define BOOST_PAINT_RADIUS 24.0f
+// Eraser circle — carves stroke geometry under the cursor
+#define ERASE_RADIUS (STROKE_PHYSICS_RADIUS + 8.0f)
+// Surviving erase crumbs shorter than this are discarded
+#define ERASE_MIN_PIECE_LEN 10.0f
+// Subdivide long straight spans so paint/erase have useful segment granularity
+#define STROKE_MAX_SEG_LEN 15.0f
 
 // Cannons: ball entering the muzzle circle is relaunched along the barrel
 #define CANNON_ENTRY_RADIUS 26.0f
@@ -51,7 +60,7 @@
 #define TUNE_DROP_FORCE_DEFAULT       0.0f
 #define TUNE_DROP_FORCE_MIN           0.0f
 #define TUNE_DROP_FORCE_MAX           2500.0f
-// Boost line: acceleration along current velocity builds while on the line
+// Boost: acceleration along current velocity builds while on a boosted segment
 #define TUNE_BOOST_VEL_RATE_DEFAULT   10000.0f
 #define TUNE_BOOST_VEL_RATE_MIN       0.0f
 #define TUNE_BOOST_VEL_RATE_MAX       40000.0f
@@ -64,32 +73,35 @@ typedef struct PhysicsTunables
     float ballDensity;     // ball "weight" — mass via shape density
     float ballRestitution; // bounciness 0..~1
     float dropForce;       // initial downward velocity kick applied at drop
-    float boostVelRate;    // accel/sec gained while on a boost line
+    float boostVelRate;    // accel/sec gained while on a boost segment
     float boostVelMax;     // cap on boost acceleration along current velocity
 } PhysicsTunables;
 
-// Build-phase undo: every draw/erase/place action is recorded so Alt+Z can
+// Build-phase undo: every draw/erase/place/paint action is recorded so Alt+Z can
 // revert it. Erased geometry is stored inline so undo can recreate it.
 #define UNDO_MAX_ACTIONS 32
+#define UNDO_MAX_PIECES 16
 
 typedef enum UndoKind
 {
     UNDO_NONE = 0,
     UNDO_DRAW_STROKE,  // undo = erase the drawn slot
-    UNDO_DRAW_BOOST,   // undo = clear the boost line slot
     UNDO_ADD_CANNON,   // undo = clear the cannon slot
-    UNDO_ERASE_STROKE, // undo = recreate the stroke from stored points
-    UNDO_ERASE_BOOST,  // undo = recreate the boost line from stored points
+    UNDO_SPLIT_STROKE, // undo = destroy pieces, recreate original stroke
+    UNDO_PAINT_BOOST,  // undo = restore previous boost mask on a stroke
     UNDO_ERASE_CANNON  // undo = re-place the cannon from stored pos/angle
 } UndoKind;
 
 typedef struct UndoAction
 {
     UndoKind kind;
-    int slot;                          // draw/add actions: which slot to clear
-    Vector2 points[MAX_STROKE_POINTS]; // erase actions: world-space geometry to recreate
+    int slot;                          // draw/paint/add: which slot
+    Vector2 points[MAX_STROKE_POINTS]; // split: world-space geometry to recreate
     int pointCount;
-    Color color;    // erased stroke color
+    Color color;                       // split: stroke color
+    uint8_t boostSeg[MAX_STROKE_SEGS]; // split / paint: boost mask
+    int pieceSlots[UNDO_MAX_PIECES];   // split: slots created from the carve
+    int pieceCount;
     Vector2 pos;    // erased cannon position
     float angleRad; // erased cannon barrel angle
 } UndoAction;
@@ -101,18 +113,8 @@ typedef struct DrawnBody
     Vector2 localPoints[MAX_STROKE_POINTS]; // stroke points in body-local space
     int pointCount;
     Color crayonColor;
+    uint8_t boostSeg[MAX_STROKE_SEGS]; // 1 = boosted, one entry per segment
 } DrawnBody;
-
-// Player-drawn boost line: a solid capsule-chain track exactly like a crayon
-// stroke, plus a speed amp — while the ball rides it, its current velocity is
-// amplified with a gradual buildup (rate/max from admin tunables)
-typedef struct BoostLine
-{
-    bool active;
-    b2BodyId bodyId;                   // static collider, same as drawn strokes
-    Vector2 points[MAX_STROKE_POINTS]; // world space, post-smoothing
-    int pointCount;
-} BoostLine;
 
 // Player-placed cannon: entry sensor circle + barrel direction. Ball entering
 // the circle is relaunched along the barrel at CANNON_BLAST_SPEED.
@@ -154,7 +156,6 @@ typedef struct PhysicsWorld
     DrawnBody drawn[MAX_DRAWN_BODIES];
     int drawnCount;
 
-    BoostLine boostLines[MAX_BOOST_LINES];
     Cannon cannons[MAX_CANNONS];
 
     // Build-phase undo stack (oldest dropped when full). Creation/erase calls
@@ -165,6 +166,7 @@ typedef struct PhysicsWorld
 
     // Per-level build budgets (from LevelDef; canvas px of ink / cannon slots).
     // Zero = resource disabled for this level.
+    // boostLineCapacity budgets painted boost length on crayon strokes.
     float lineCapacity;
     float boostLineCapacity;
     int cannonCapacity;
@@ -186,7 +188,7 @@ typedef struct PhysicsWorld
 
     PhysicsTunables tunables; // persists across level loads
 
-    // Built-up boost-line acceleration along current velocity (0 when off a line)
+    // Built-up boost acceleration along current velocity (0 when off a boost)
     float boostLineAccel;
 
     float accumulator;
@@ -210,22 +212,31 @@ float PhysicsGetBallAngle(const PhysicsWorld *phys);
 bool PhysicsCheckWin(const PhysicsWorld *phys);
 bool PhysicsCheckPit(const PhysicsWorld *phys); // ball fell into a pit = game over
 
-// Create a static capsule-chain track from world-space stroke points. Returns drawn index or -1.
-int PhysicsCreateDrawnBody(PhysicsWorld *phys, const Vector2 *worldPoints, int count, Color color);
+// Create a static capsule-chain track from world-space stroke points.
+// boostSeg may be NULL (no boost) or length count-1 for the input polyline;
+// it is remapped onto the resampled segments. Returns drawn index or -1.
+int PhysicsCreateDrawnBody(PhysicsWorld *phys, const Vector2 *worldPoints, int count,
+                           Color color, const uint8_t *boostSeg);
 
-// Destroy drawn body under world-space point. Returns true if something was erased.
+// Carve stroke geometry under worldPoint (erase circle). Splits into pieces;
+// returns true if a stroke was hit. Full wipe is the zero-pieces case.
 bool PhysicsEraseAtPoint(PhysicsWorld *phys, Vector2 worldPoint);
 
-// Boost lines: create from world-space points / erase near a point
-int PhysicsCreateBoostLine(PhysicsWorld *phys, const Vector2 *worldPoints, int count);
-bool PhysicsEraseBoostLineAt(PhysicsWorld *phys, Vector2 worldPoint);
+// Paint (apply=true) or clear (apply=false) boost on segments near worldPoint.
+// Consumes/refunds boostLineCapacity by segment length. Returns the stroke slot
+// whose mask changed, or -1. If the mask changed and prevMask is non-NULL, the
+// previous mask is copied there (caller records undo once per gesture/slot).
+int PhysicsPaintBoostAt(PhysicsWorld *phys, Vector2 worldPoint, bool apply, uint8_t *prevMask);
+
+// Record a paint-boost undo entry (call once per stroke per paint gesture).
+void PhysicsRecordPaintBoostUndo(PhysicsWorld *phys, int slot, const uint8_t *prevMask);
 
 // Cannons: place at pos aiming along angleRad / erase near a point
 int PhysicsAddCannon(PhysicsWorld *phys, Vector2 pos, float angleRad);
 bool PhysicsEraseCannonAt(PhysicsWorld *phys, Vector2 worldPoint);
 int PhysicsActiveCannonCount(const PhysicsWorld *phys);
 
-// Ink spent so far (canvas px) — erase refunds simply by removing the geometry
+// Ink spent so far (canvas px) — erase/unpaint refunds by removing geometry/flags
 float PhysicsDrawnInkUsed(const PhysicsWorld *phys);
 float PhysicsBoostInkUsed(const PhysicsWorld *phys);
 
@@ -233,8 +244,7 @@ float PhysicsBoostInkUsed(const PhysicsWorld *phys);
 // A click away from the trail clears the flag. Returns true if a flag is now set.
 bool PhysicsSetCheckpointNear(PhysicsWorld *phys, Vector2 p);
 
-// Undo the most recent build action (draw/erase stroke, boost line or cannon).
-// Build phase only. Returns false when the stack is empty.
+// Undo the most recent build action. Build phase only. Returns false when empty.
 bool PhysicsUndoLastAction(PhysicsWorld *phys);
 
 DrawnBody *PhysicsGetDrawn(PhysicsWorld *phys, int index);

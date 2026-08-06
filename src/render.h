@@ -21,11 +21,12 @@ void RenderSketchPreview(const SketchState *sketch);
 void RenderFinishLine(const PolyZone *zone);
 void RenderBall(Vector2 pos, float radius, float angle);
 
-// World-space build elements: boost lines (directional dashes), cannons, the
-// in-progress cannon aim preview, the last-run ghost trail and checkpoint flag
-void RenderBoostLines(const PhysicsWorld *phys);
+// World-space build elements: boost overlay on crayon strokes, cannons, the
+// in-progress cannon aim preview, paint/erase cursors, ghost trail and flag
+void RenderBoostOverlay(const PhysicsWorld *phys);
 void RenderCannons(const PhysicsWorld *phys);
 void RenderCannonPreview(const SketchState *sketch);
+void RenderToolCursor(const SketchState *sketch, Vector2 worldMouse);
 void RenderGhostTrail(const PhysicsWorld *phys);
 void RenderCheckpointFlag(const PhysicsWorld *phys);
 

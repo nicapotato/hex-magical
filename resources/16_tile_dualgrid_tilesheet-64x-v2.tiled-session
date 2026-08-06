@@ -1,10 +1,10 @@
 {
-    "activeFile": "act-2/map-9.tmx",
+    "activeFile": "act-2/map-8.tmx",
     "expandedProjectPaths": [
         ".",
         "act-3",
-        "act-2",
-        "act-1"
+        "act-1",
+        "act-2"
     ],
     "fileStates": {
         "16_tile_dualgrid_tilesheet-64x-v2.tsx": {
@@ -103,16 +103,16 @@
             "scale": 0.5,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 479,
-                "y": 479
+                "x": 529,
+                "y": 576
             }
         },
         "act-2/map-9.tmx": {
-            "scale": 0.6006770833333334,
+            "scale": 0.75,
             "selectedLayer": 0,
             "viewCenter": {
-                "x": 480.2913378999393,
-                "y": 470.30260990202027
+                "x": 463.33333333333326,
+                "y": 730.6666666666665
             }
         },
         "act-2/tileset.tsx": {
@@ -151,8 +151,8 @@
     ],
     "project": "16_tile_dualgrid_tilesheet-64x-v2.tiled-project",
     "recentFiles": [
-        "act-2/map-8.tmx",
         "act-2/map-9.tmx",
+        "act-2/map-8.tmx",
         "act-2/map-7.tmx",
         "act-2/map-6.tmx",
         "act-2/map-5.tmx",

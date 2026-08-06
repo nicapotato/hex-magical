@@ -34,6 +34,8 @@ static PhysicsWorld physics = { 0 };
 
 // -v: print the ball position once per sim-second — trajectory at a glance
 static bool verbose = false;
+// --resave: after apply, capture+overwrite the solution file (post-resample points/masks)
+static bool resave = false;
 
 // Same candidate dirs as the game: repo root and beside the binary.
 // Solutions name their level by .tmx basename; maps live in act subfolders
@@ -93,6 +95,27 @@ static bool RunSolution(const char *path)
     // Round-trip check: capturing back from the world (the in-game F5 path) must
     // reproduce the strokes we just applied — guards the save/load/capture pipeline
     SolutionCapture(&recaptured, &physics, solution.levelFile);
+    if (resave)
+    {
+        if (!SolutionSave(&recaptured, path))
+        {
+            printf("FAIL %s: --resave could not write %s\n", name, path);
+            PhysicsShutdown(&physics);
+            TiledLevelUnload(&level);
+            return false;
+        }
+        // Reload the rewritten file so the rest of the test validates the new bytes
+        if (!SolutionLoad(&solution, path))
+        {
+            printf("FAIL %s: --resave wrote an unreadable file\n", name);
+            PhysicsShutdown(&physics);
+            TiledLevelUnload(&level);
+            return false;
+        }
+        SolutionCapture(&recaptured, &physics, solution.levelFile);
+        printf("RESAVED %s (%d strokes, %d cannons)\n", name,
+               solution.strokeCount, solution.cannonCount);
+    }
     if (recaptured.strokeCount != solution.strokeCount)
     {
         printf("FAIL %s: capture round-trip lost strokes (%d applied, %d captured)\n",
@@ -101,18 +124,24 @@ static bool RunSolution(const char *path)
         TiledLevelUnload(&level);
         return false;
     }
-    if ((recaptured.boostCount != solution.boostCount) ||
-        (recaptured.cannonCount != solution.cannonCount))
+    if (recaptured.cannonCount != solution.cannonCount)
     {
-        printf("FAIL %s: capture round-trip lost builds (boosts %d->%d, cannons %d->%d)\n",
-               name, solution.boostCount, recaptured.boostCount,
-               solution.cannonCount, recaptured.cannonCount);
+        printf("FAIL %s: capture round-trip lost cannons (%d -> %d)\n",
+               name, solution.cannonCount, recaptured.cannonCount);
         PhysicsShutdown(&physics);
         TiledLevelUnload(&level);
         return false;
     }
     for (int s = 0; s < solution.strokeCount; s++)
     {
+        if (recaptured.strokes[s].pointCount != solution.strokes[s].pointCount)
+        {
+            printf("FAIL %s: capture round-trip changed stroke %d point count (%d -> %d)\n",
+                   name, s, solution.strokes[s].pointCount, recaptured.strokes[s].pointCount);
+            PhysicsShutdown(&physics);
+            TiledLevelUnload(&level);
+            return false;
+        }
         for (int p = 0; p < solution.strokes[s].pointCount; p++)
         {
             float dx = recaptured.strokes[s].points[p].x - solution.strokes[s].points[p].x;
@@ -121,6 +150,17 @@ static bool RunSolution(const char *path)
             {
                 printf("FAIL %s: capture round-trip moved stroke %d point %d by (%.4f, %.4f)\n",
                        name, s, p, dx, dy);
+                PhysicsShutdown(&physics);
+                TiledLevelUnload(&level);
+                return false;
+            }
+        }
+        int segs = solution.strokes[s].pointCount - 1;
+        for (int g = 0; g < segs; g++)
+        {
+            if (recaptured.strokes[s].boostSeg[g] != solution.strokes[s].boostSeg[g])
+            {
+                printf("FAIL %s: capture round-trip changed stroke %d boost seg %d\n", name, s, g);
                 PhysicsShutdown(&physics);
                 TiledLevelUnload(&level);
                 return false;
@@ -179,10 +219,11 @@ int main(int argc, char **argv)
     int failures = 0;
 
     int firstFile = 1;
-    if ((argc > 1) && (strcmp(argv[1], "-v") == 0))
+    while (firstFile < argc)
     {
-        verbose = true;
-        firstFile = 2;
+        if (strcmp(argv[firstFile], "-v") == 0) { verbose = true; firstFile++; }
+        else if (strcmp(argv[firstFile], "--resave") == 0) { resave = true; firstFile++; }
+        else break;
     }
 
     if (argc > firstFile)

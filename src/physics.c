@@ -41,14 +41,14 @@ static void ClearDrawn(PhysicsWorld *phys)
         phys->drawn[i].active = false;
         phys->drawn[i].bodyId = b2_nullBodyId;
         phys->drawn[i].pointCount = 0;
+        memset(phys->drawn[i].boostSeg, 0, sizeof(phys->drawn[i].boostSeg));
     }
     phys->drawnCount = 0;
 }
 
-// Boost lines, cannons, ghost trail, checkpoint and undo all reset with the level
+// Cannons, ghost trail, checkpoint and undo all reset with the level
 static void ClearBuildExtras(PhysicsWorld *phys)
 {
-    memset(phys->boostLines, 0, sizeof(phys->boostLines));
     memset(phys->cannons, 0, sizeof(phys->cannons));
     phys->trailCount = 0;
     phys->trailStepCounter = 0;
@@ -84,7 +84,7 @@ static float PointSegmentDist(Vector2 p, Vector2 a, Vector2 b, Vector2 *tangent)
     float lenSq = dx * dx + dy * dy;
     if (lenSq < 0.0001f)
     {
-        *tangent = (Vector2){ 0.0f, 0.0f };
+        if (tangent) *tangent = (Vector2){ 0.0f, 0.0f };
         float ex = p.x - a.x;
         float ey = p.y - a.y;
         return sqrtf(ex * ex + ey * ey);
@@ -97,7 +97,7 @@ static float PointSegmentDist(Vector2 p, Vector2 a, Vector2 b, Vector2 *tangent)
     float ex = p.x - (a.x + t * dx);
     float ey = p.y - (a.y + t * dy);
     float len = sqrtf(lenSq);
-    *tangent = (Vector2){ dx / len, dy / len };
+    if (tangent) *tangent = (Vector2){ dx / len, dy / len };
     return sqrtf(ex * ex + ey * ey);
 }
 
@@ -113,6 +113,13 @@ static float PolylineLength(const Vector2 *points, int count)
     return length;
 }
 
+static float SegLen(Vector2 a, Vector2 b)
+{
+    float dx = b.x - a.x;
+    float dy = b.y - a.y;
+    return sqrtf(dx * dx + dy * dy);
+}
+
 static int AllocDrawnSlot(PhysicsWorld *phys)
 {
     for (int i = 0; i < MAX_DRAWN_BODIES; i++)
@@ -120,6 +127,107 @@ static int AllocDrawnSlot(PhysicsWorld *phys)
         if (!phys->drawn[i].active) return i;
     }
     return -1;
+}
+
+// Subdivide spans longer than maxLen. Relaxes maxLen when the stroke would
+// otherwise exceed maxOut so the full polyline (including the endpoint) is kept.
+static int ResampleMaxSegLen(const Vector2 *in, int count, float maxLen, Vector2 *out, int maxOut)
+{
+    if ((count < 2) || (maxOut < 2)) return 0;
+
+    // How fine can we subdivide and still fit? totalLen / (maxOut-1) is the floor.
+    float totalLen = PolylineLength(in, count);
+    float fitLen = totalLen / (float)(maxOut - 1);
+    if (fitLen > maxLen) maxLen = fitLen;
+
+    out[0] = in[0];
+    int outCount = 1;
+
+    for (int i = 0; i < count - 1; i++)
+    {
+        Vector2 a = in[i];
+        Vector2 b = in[i + 1];
+        float len = SegLen(a, b);
+        if (len < 0.0001f)
+        {
+            // Skip degenerate; keep final endpoint via the next real segment
+            if ((i == count - 2) && (outCount < maxOut)) out[outCount++] = b;
+            continue;
+        }
+
+        int steps = (int)ceilf(len / maxLen);
+        if (steps < 1) steps = 1;
+
+        // Reserve one slot per remaining input vertex so the stroke never truncates
+        int inputLeft = (count - 1) - i; // including current segment's endpoint
+        int remainingSlots = maxOut - outCount;
+        if (remainingSlots < inputLeft) steps = 1;
+        else if (steps > remainingSlots - (inputLeft - 1)) steps = remainingSlots - (inputLeft - 1);
+        if (steps < 1) steps = 1;
+
+        for (int s = 1; s <= steps; s++)
+        {
+            if (outCount >= maxOut) break;
+            float t = (float)s / (float)steps;
+            out[outCount++] = (Vector2){ a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t };
+        }
+    }
+
+    // Guarantee the original endpoint survives
+    if (outCount >= 1) out[outCount - 1] = in[count - 1];
+    return outCount;
+}
+
+// Map each output segment's boost from the nearest input segment (by midpoint).
+static void RemapBoostMask(const Vector2 *in, int inCount, const uint8_t *inBoost,
+                           const Vector2 *out, int outCount, uint8_t *outBoost)
+{
+    int outSegs = outCount - 1;
+    if (outSegs < 0) outSegs = 0;
+    memset(outBoost, 0, (size_t)outSegs);
+
+    if ((inBoost == NULL) || (inCount < 2) || (outCount < 2)) return;
+
+    for (int o = 0; o < outSegs; o++)
+    {
+        Vector2 mid = {
+            0.5f * (out[o].x + out[o + 1].x),
+            0.5f * (out[o].y + out[o + 1].y)
+        };
+        float best = 1.0e30f;
+        int bestSeg = 0;
+        for (int i = 0; i < inCount - 1; i++)
+        {
+            float d = PointSegmentDist(mid, in[i], in[i + 1], NULL);
+            if (d < best)
+            {
+                best = d;
+                bestSeg = i;
+            }
+        }
+        outBoost[o] = inBoost[bestSeg];
+    }
+}
+
+static void DrawnWorldPoints(const DrawnBody *drawn, Vector2 *worldPts)
+{
+    b2Transform xf = b2Body_GetTransform(drawn->bodyId);
+    for (int p = 0; p < drawn->pointCount; p++)
+    {
+        b2Vec2 world = b2TransformPoint(xf, ToB2(drawn->localPoints[p]));
+        worldPts[p] = FromB2(world);
+    }
+}
+
+static void DestroyDrawnSlot(PhysicsWorld *phys, int slot)
+{
+    DrawnBody *drawn = &phys->drawn[slot];
+    if (!drawn->active) return;
+    if (b2Body_IsValid(drawn->bodyId)) b2DestroyBody(drawn->bodyId);
+    drawn->active = false;
+    drawn->bodyId = b2_nullBodyId;
+    drawn->pointCount = 0;
+    memset(drawn->boostSeg, 0, sizeof(drawn->boostSeg));
 }
 
 static void CreateStaticBoxes(PhysicsWorld *phys, const LevelDef *level)
@@ -399,9 +507,9 @@ static void ApplyBoostZones(PhysicsWorld *phys)
     b2Body_ApplyForceToCenter(phys->ballId, force, true);
 }
 
-// While near a boost line, gradually build acceleration along the ball's current
-// velocity (no steering). Charge resets as soon as the ball leaves every line.
-static void ApplyBoostLines(PhysicsWorld *phys, float step)
+// While near a boosted crayon segment, gradually build acceleration along the
+// ball's current velocity (no steering). Charge resets when leaving every boost.
+static void ApplyBoostSegments(PhysicsWorld *phys, float step)
 {
     if (!b2Body_IsValid(phys->ballId))
     {
@@ -410,24 +518,27 @@ static void ApplyBoostLines(PhysicsWorld *phys, float step)
     }
 
     Vector2 ball = FromB2(b2Body_GetPosition(phys->ballId));
-    bool onLine = false;
-    for (int l = 0; l < MAX_BOOST_LINES && !onLine; l++)
-    {
-        const BoostLine *line = &phys->boostLines[l];
-        if (!line->active) continue;
+    bool onBoost = false;
+    Vector2 worldPts[MAX_STROKE_POINTS];
 
-        for (int i = 0; i < line->pointCount - 1; i++)
+    for (int d = 0; d < MAX_DRAWN_BODIES && !onBoost; d++)
+    {
+        const DrawnBody *drawn = &phys->drawn[d];
+        if (!drawn->active || (drawn->pointCount < 2)) continue;
+
+        DrawnWorldPoints(drawn, worldPts);
+        for (int i = 0; i < drawn->pointCount - 1; i++)
         {
-            Vector2 unused = { 0 };
-            if (PointSegmentDist(ball, line->points[i], line->points[i + 1], &unused) < BOOST_LINE_RADIUS)
+            if (!drawn->boostSeg[i]) continue;
+            if (PointSegmentDist(ball, worldPts[i], worldPts[i + 1], NULL) < BOOST_LINE_RADIUS)
             {
-                onLine = true;
+                onBoost = true;
                 break;
             }
         }
     }
 
-    if (!onLine)
+    if (!onBoost)
     {
         phys->boostLineAccel = 0.0f;
         return;
@@ -512,7 +623,7 @@ void PhysicsStep(PhysicsWorld *phys, float dt)
     {
         ApplyAntiGravityZones(phys);
         ApplyBoostZones(phys);
-        ApplyBoostLines(phys, step);
+        ApplyBoostSegments(phys, step);
         ApplyCannons(phys, step);
         b2World_Step(phys->worldId, step, PHYSICS_SUBSTEPS);
         RecordTrailSample(phys);
@@ -560,31 +671,25 @@ DrawnBody *PhysicsGetDrawn(PhysicsWorld *phys, int index)
     return &phys->drawn[index];
 }
 
-int PhysicsCreateDrawnBody(PhysicsWorld *phys, const Vector2 *worldPoints, int count, Color color)
+int PhysicsCreateDrawnBody(PhysicsWorld *phys, const Vector2 *worldPoints, int count,
+                           Color color, const uint8_t *boostSeg)
 {
     if (!phys->valid || (count < 2)) return -1;
 
     int slot = AllocDrawnSlot(phys);
     if (slot < 0) return -1;
 
-    // Resample along the stroke if needed so capsule count stays bounded
-    Vector2 path[MAX_STROKE_POINTS];
-    int pathCount = count;
-    if (pathCount > MAX_STROKE_POINTS) pathCount = MAX_STROKE_POINTS;
+    // Bound + subdivide long spans for paint/erase granularity
+    Vector2 capped[MAX_STROKE_POINTS];
+    int cappedCount = (count < MAX_STROKE_POINTS) ? count : MAX_STROKE_POINTS;
+    for (int i = 0; i < cappedCount; i++) capped[i] = worldPoints[i];
 
-    if (count <= (MAX_STROKE_CAPSULES + 1))
-    {
-        for (int i = 0; i < pathCount; i++) path[i] = worldPoints[i];
-    }
-    else
-    {
-        pathCount = MAX_STROKE_CAPSULES + 1;
-        for (int i = 0; i < pathCount; i++)
-        {
-            int src = (i * (count - 1)) / (pathCount - 1);
-            path[i] = worldPoints[src];
-        }
-    }
+    Vector2 path[MAX_STROKE_POINTS];
+    int pathCount = ResampleMaxSegLen(capped, cappedCount, STROKE_MAX_SEG_LEN, path, MAX_STROKE_POINTS);
+    if (pathCount < 2) return -1;
+
+    uint8_t mappedBoost[MAX_STROKE_SEGS];
+    RemapBoostMask(capped, cappedCount, boostSeg, path, pathCount, mappedBoost);
 
     // Centroid — body origin; local points stay axis-aligned to world at creation
     Vector2 centroid = { 0 };
@@ -612,9 +717,7 @@ int PhysicsCreateDrawnBody(PhysicsWorld *phys, const Vector2 *worldPoints, int c
     int capsules = 0;
     for (int i = 0; i < pathCount - 1; i++)
     {
-        float dx = path[i + 1].x - path[i].x;
-        float dy = path[i + 1].y - path[i].y;
-        float segLen = sqrtf(dx * dx + dy * dy);
+        float segLen = SegLen(path[i], path[i + 1]);
         if (segLen < minSegLen) continue;
 
         b2Capsule capsule = { 0 };
@@ -639,6 +742,8 @@ int PhysicsCreateDrawnBody(PhysicsWorld *phys, const Vector2 *worldPoints, int c
     drawn->bodyId = bodyId;
     drawn->crayonColor = color;
     drawn->pointCount = pathCount;
+    memset(drawn->boostSeg, 0, sizeof(drawn->boostSeg));
+    for (int i = 0; i < pathCount - 1; i++) drawn->boostSeg[i] = mappedBoost[i];
 
     for (int i = 0; i < pathCount; i++)
     {
@@ -657,172 +762,286 @@ int PhysicsCreateDrawnBody(PhysicsWorld *phys, const Vector2 *worldPoints, int c
     return slot;
 }
 
-typedef struct EraseQuery
+//----------------------------------------------------------------------------------
+// Partial erase — clip polyline against erase circle, spawn surviving pieces
+//----------------------------------------------------------------------------------
+static bool PointInCircle(Vector2 p, Vector2 c, float r)
 {
-    PhysicsWorld *phys;
-    b2BodyId hitBody;
-} EraseQuery;
+    float dx = p.x - c.x;
+    float dy = p.y - c.y;
+    return (dx * dx + dy * dy) <= (r * r);
+}
 
-static bool EraseOverlapCallback(b2ShapeId shapeId, void *context)
+// Solve |a + t(b-a) - c| = r for t in (0,1). Returns 0..2 sorted ascending.
+static int SegmentCircleHits(Vector2 a, Vector2 b, Vector2 c, float r, float *tOut)
 {
-    EraseQuery *query = (EraseQuery *)context;
-    b2BodyId bodyId = b2Shape_GetBody(shapeId);
-    intptr_t tag = (intptr_t)b2Body_GetUserData(bodyId);
-    if (tag == BALL_USER_TAG) return true; // continue — never erase the ball
+    float dx = b.x - a.x;
+    float dy = b.y - a.y;
+    float fx = a.x - c.x;
+    float fy = a.y - c.y;
+    float A = dx * dx + dy * dy;
+    float B = 2.0f * (fx * dx + fy * dy);
+    float C = fx * fx + fy * fy - r * r;
+    if (A < 0.0001f) return 0;
 
-    if ((tag >= 1) && (tag <= MAX_DRAWN_BODIES))
+    float disc = B * B - 4.0f * A * C;
+    if (disc < 0.0f) return 0;
+
+    float sqrtDisc = sqrtf(disc);
+    float t0 = (-B - sqrtDisc) / (2.0f * A);
+    float t1 = (-B + sqrtDisc) / (2.0f * A);
+    int n = 0;
+    if ((t0 > 0.0f) && (t0 < 1.0f)) tOut[n++] = t0;
+    if ((t1 > 0.0f) && (t1 < 1.0f) && (fabsf(t1 - t0) > 0.0001f)) tOut[n++] = t1;
+    if ((n == 2) && (tOut[0] > tOut[1]))
     {
-        int slot = (int)tag - 1;
-        if (query->phys->drawn[slot].active &&
-            B2_ID_EQUALS(query->phys->drawn[slot].bodyId, bodyId))
+        float tmp = tOut[0];
+        tOut[0] = tOut[1];
+        tOut[1] = tmp;
+    }
+    return n;
+}
+
+static Vector2 Lerp2(Vector2 a, Vector2 b, float t)
+{
+    return (Vector2){ a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t };
+}
+
+typedef struct EraseRun
+{
+    Vector2 points[MAX_STROKE_POINTS];
+    uint8_t boostSeg[MAX_STROKE_SEGS];
+    int pointCount;
+} EraseRun;
+
+static void EraseRunAppend(EraseRun *run, Vector2 p, uint8_t boostFromPrev)
+{
+    if (run->pointCount >= MAX_STROKE_POINTS) return;
+    if (run->pointCount > 0)
+    {
+        int seg = run->pointCount - 1;
+        if (seg < MAX_STROKE_SEGS) run->boostSeg[seg] = boostFromPrev;
+    }
+    run->points[run->pointCount++] = p;
+}
+
+static void EraseRunFlush(EraseRun *run, EraseRun *runs, int *runCount, int maxRuns)
+{
+    if (run->pointCount < 2) { run->pointCount = 0; return; }
+    if (PolylineLength(run->points, run->pointCount) < ERASE_MIN_PIECE_LEN)
+    {
+        run->pointCount = 0;
+        return;
+    }
+    if (*runCount >= maxRuns)
+    {
+        TraceLog(LOG_WARNING, "PHYSICS: erase produced more than %d pieces", maxRuns);
+        run->pointCount = 0;
+        return;
+    }
+    runs[(*runCount)++] = *run;
+    run->pointCount = 0;
+}
+
+// Clip a world-space polyline against the erase circle; emit surviving runs.
+static int CarvePolyline(const Vector2 *pts, int count, const uint8_t *boostSeg,
+                         Vector2 center, float radius, EraseRun *runs, int maxRuns)
+{
+    int runCount = 0;
+    EraseRun cur = { 0 };
+
+    for (int i = 0; i < count - 1; i++)
+    {
+        Vector2 a = pts[i];
+        Vector2 b = pts[i + 1];
+        uint8_t segBoost = boostSeg ? boostSeg[i] : 0;
+        bool aIn = PointInCircle(a, center, radius);
+        bool bIn = PointInCircle(b, center, radius);
+        float hits[2];
+        int hitCount = SegmentCircleHits(a, b, center, radius, hits);
+
+        // Build ordered sample params along the segment: 0, hits..., 1
+        float ts[4];
+        int tn = 0;
+        ts[tn++] = 0.0f;
+        for (int h = 0; h < hitCount; h++) ts[tn++] = hits[h];
+        ts[tn++] = 1.0f;
+
+        for (int s = 0; s < tn - 1; s++)
         {
-            query->hitBody = bodyId;
-            return false; // stop
+            float t0 = ts[s];
+            float t1 = ts[s + 1];
+            if (t1 - t0 < 0.0001f) continue;
+
+            Vector2 p0 = Lerp2(a, b, t0);
+            Vector2 p1 = Lerp2(a, b, t1);
+            Vector2 mid = Lerp2(a, b, 0.5f * (t0 + t1));
+            bool midIn = PointInCircle(mid, center, radius);
+            if (midIn) continue; // drop interior portion
+
+            // Outside subsegment — stitch into current run or start a new one
+            if (cur.pointCount == 0)
+            {
+                EraseRunAppend(&cur, p0, 0);
+                EraseRunAppend(&cur, p1, segBoost);
+            }
+            else
+            {
+                Vector2 last = cur.points[cur.pointCount - 1];
+                float gap = SegLen(last, p0);
+                if (gap > 0.5f)
+                {
+                    // Discontinuity (chord through the circle) — flush and restart
+                    EraseRunFlush(&cur, runs, &runCount, maxRuns);
+                    EraseRunAppend(&cur, p0, 0);
+                    EraseRunAppend(&cur, p1, segBoost);
+                }
+                else
+                {
+                    EraseRunAppend(&cur, p1, segBoost);
+                }
+            }
         }
+
+        (void)aIn;
+        (void)bIn;
     }
 
-    return true;
+    EraseRunFlush(&cur, runs, &runCount, maxRuns);
+    return runCount;
+}
+
+static int FindNearestDrawnStroke(PhysicsWorld *phys, Vector2 worldPoint, float radius)
+{
+    float best = radius;
+    int bestSlot = -1;
+    Vector2 worldPts[MAX_STROKE_POINTS];
+
+    for (int i = 0; i < MAX_DRAWN_BODIES; i++)
+    {
+        const DrawnBody *drawn = &phys->drawn[i];
+        if (!drawn->active || (drawn->pointCount < 2)) continue;
+
+        DrawnWorldPoints(drawn, worldPts);
+        for (int p = 0; p < drawn->pointCount - 1; p++)
+        {
+            float d = PointSegmentDist(worldPoint, worldPts[p], worldPts[p + 1], NULL);
+            if (d < best)
+            {
+                best = d;
+                bestSlot = i;
+            }
+        }
+    }
+    return bestSlot;
 }
 
 bool PhysicsEraseAtPoint(PhysicsWorld *phys, Vector2 worldPoint)
 {
     if (!phys->valid) return false;
 
-    const float pad = 8.0f;
-    b2AABB aabb;
-    aabb.lowerBound = (b2Vec2){ worldPoint.x - pad, worldPoint.y - pad };
-    aabb.upperBound = (b2Vec2){ worldPoint.x + pad, worldPoint.y + pad };
+    int slot = FindNearestDrawnStroke(phys, worldPoint, ERASE_RADIUS);
+    if (slot < 0) return false;
 
-    EraseQuery query = { 0 };
-    query.phys = phys;
-    query.hitBody = b2_nullBodyId;
+    DrawnBody *drawn = &phys->drawn[slot];
+    Vector2 worldPts[MAX_STROKE_POINTS];
+    DrawnWorldPoints(drawn, worldPts);
 
-    b2QueryFilter filter = b2DefaultQueryFilter();
-    b2World_OverlapAABB(phys->worldId, aabb, filter, EraseOverlapCallback, &query);
+    uint8_t origBoost[MAX_STROKE_SEGS];
+    memcpy(origBoost, drawn->boostSeg, sizeof(origBoost));
+    Color origColor = drawn->crayonColor;
+    int origCount = drawn->pointCount;
+    Vector2 origPts[MAX_STROKE_POINTS];
+    memcpy(origPts, worldPts, (size_t)origCount * sizeof(Vector2));
 
-    if (!b2Body_IsValid(query.hitBody)) return false;
+    EraseRun runs[UNDO_MAX_PIECES];
+    int runCount = CarvePolyline(worldPts, drawn->pointCount, drawn->boostSeg,
+                                 worldPoint, ERASE_RADIUS, runs, UNDO_MAX_PIECES);
 
-    void *userData = b2Body_GetUserData(query.hitBody);
-    int slot = (int)(intptr_t)userData - 1;
-    if ((slot < 0) || (slot >= MAX_DRAWN_BODIES)) return false;
-    if (!phys->drawn[slot].active) return false;
-
-    // Record the erased geometry (world space) so undo can redraw it
-    UndoAction *undo = PushUndo(phys, UNDO_ERASE_STROKE);
+    // Record undo before destroying (piece slots filled after recreate)
+    UndoAction *undo = PushUndo(phys, UNDO_SPLIT_STROKE);
     if (undo)
     {
-        const DrawnBody *drawn = &phys->drawn[slot];
-        b2Transform xf = b2Body_GetTransform(drawn->bodyId);
-        undo->pointCount = drawn->pointCount;
-        undo->color = drawn->crayonColor;
-        for (int p = 0; p < drawn->pointCount; p++)
-        {
-            b2Vec2 world = b2TransformPoint(xf, ToB2(drawn->localPoints[p]));
-            undo->points[p] = FromB2(world);
-        }
+        undo->pointCount = origCount;
+        undo->color = origColor;
+        memcpy(undo->points, origPts, (size_t)origCount * sizeof(Vector2));
+        memcpy(undo->boostSeg, origBoost, sizeof(origBoost));
+        undo->pieceCount = 0;
     }
 
-    b2DestroyBody(query.hitBody);
-    phys->drawn[slot].active = false;
-    phys->drawn[slot].bodyId = b2_nullBodyId;
-    phys->drawn[slot].pointCount = 0;
+    DestroyDrawnSlot(phys, slot);
+
+    phys->undoApplying = true; // piece creates must not push UNDO_DRAW_STROKE
+    for (int r = 0; r < runCount; r++)
+    {
+        int pieceSlot = PhysicsCreateDrawnBody(phys, runs[r].points, runs[r].pointCount,
+                                               origColor, runs[r].boostSeg);
+        if ((pieceSlot >= 0) && undo && (undo->pieceCount < UNDO_MAX_PIECES))
+        {
+            undo->pieceSlots[undo->pieceCount++] = pieceSlot;
+        }
+    }
+    phys->undoApplying = false;
+
     return true;
 }
 
 //----------------------------------------------------------------------------------
-// Boost lines and cannons
+// Boost paint on existing crayon strokes
 //----------------------------------------------------------------------------------
-int PhysicsCreateBoostLine(PhysicsWorld *phys, const Vector2 *worldPoints, int count)
+int PhysicsPaintBoostAt(PhysicsWorld *phys, Vector2 worldPoint, bool apply, uint8_t *prevMask)
 {
-    if (!phys->valid || (count < 2)) return -1;
+    if (!phys->valid) return -1;
 
-    for (int i = 0; i < MAX_BOOST_LINES; i++)
+    int slot = FindNearestDrawnStroke(phys, worldPoint, BOOST_PAINT_RADIUS);
+    if (slot < 0) return -1;
+
+    DrawnBody *drawn = &phys->drawn[slot];
+    Vector2 worldPts[MAX_STROKE_POINTS];
+    DrawnWorldPoints(drawn, worldPts);
+
+    uint8_t before[MAX_STROKE_SEGS];
+    memcpy(before, drawn->boostSeg, sizeof(before));
+
+    float boostUsed = PhysicsBoostInkUsed(phys);
+    float capacity = phys->boostLineCapacity;
+    bool changed = false;
+
+    for (int i = 0; i < drawn->pointCount - 1; i++)
     {
-        BoostLine *line = &phys->boostLines[i];
-        if (line->active) continue;
+        float d = PointSegmentDist(worldPoint, worldPts[i], worldPts[i + 1], NULL);
+        if (d > BOOST_PAINT_RADIUS) continue;
 
-        line->active = true;
-        line->pointCount = (count < MAX_STROKE_POINTS) ? count : MAX_STROKE_POINTS;
-        for (int p = 0; p < line->pointCount; p++) line->points[p] = worldPoints[p];
-
-        // Solid capsule-chain track — identical collision to a crayon stroke,
-        // so the ball rides the boost line like any other drawn line
-        b2BodyDef bodyDef = b2DefaultBodyDef();
-        bodyDef.type = b2_staticBody;
-        bodyDef.position = (b2Vec2){ 0.0f, 0.0f }; // points stored world space
-        line->bodyId = b2CreateBody(phys->worldId, &bodyDef);
-
-        b2ShapeDef shapeDef = b2DefaultShapeDef();
-        shapeDef.material.friction = 0.55f;
-        shapeDef.material.restitution = 0.1f;
-
-        const float minSegLen = 1.0f;
-        int capsules = 0;
-        for (int p = 0; p < line->pointCount - 1; p++)
+        float len = SegLen(worldPts[i], worldPts[i + 1]);
+        if (apply)
         {
-            float dx = line->points[p + 1].x - line->points[p].x;
-            float dy = line->points[p + 1].y - line->points[p].y;
-            if (sqrtf(dx * dx + dy * dy) < minSegLen) continue;
-
-            b2Capsule capsule = { 0 };
-            capsule.center1 = ToB2(line->points[p]);
-            capsule.center2 = ToB2(line->points[p + 1]);
-            capsule.radius = STROKE_PHYSICS_RADIUS;
-            b2CreateCapsuleShape(line->bodyId, &shapeDef, &capsule);
-            capsules++;
+            if (drawn->boostSeg[i]) continue;
+            // Budget: refuse segments that would exceed capacity
+            if ((boostUsed + len) > capacity + 0.01f) continue;
+            drawn->boostSeg[i] = 1;
+            boostUsed += len;
+            changed = true;
         }
-        if (capsules == 0)
+        else
         {
-            b2Circle circle = { 0 };
-            circle.center = ToB2(line->points[0]);
-            circle.radius = STROKE_PHYSICS_RADIUS;
-            b2CreateCircleShape(line->bodyId, &shapeDef, &circle);
+            if (!drawn->boostSeg[i]) continue;
+            drawn->boostSeg[i] = 0;
+            changed = true;
         }
-
-        UndoAction *undo = PushUndo(phys, UNDO_DRAW_BOOST);
-        if (undo) undo->slot = i;
-
-        return i;
     }
 
-    TraceLog(LOG_WARNING, "PHYSICS: more than %d boost lines", MAX_BOOST_LINES);
-    return -1;
+    if (!changed) return -1;
+
+    if (prevMask) memcpy(prevMask, before, sizeof(before));
+    return slot;
 }
 
-static void DestroyBoostLine(BoostLine *line)
+void PhysicsRecordPaintBoostUndo(PhysicsWorld *phys, int slot, const uint8_t *prevMask)
 {
-    if (b2Body_IsValid(line->bodyId)) b2DestroyBody(line->bodyId);
-    line->bodyId = b2_nullBodyId;
-    line->active = false;
-    line->pointCount = 0;
-}
-
-bool PhysicsEraseBoostLineAt(PhysicsWorld *phys, Vector2 worldPoint)
-{
-    const float pad = STROKE_PHYSICS_RADIUS + 8.0f;
-    for (int i = 0; i < MAX_BOOST_LINES; i++)
-    {
-        BoostLine *line = &phys->boostLines[i];
-        if (!line->active) continue;
-
-        for (int p = 0; p < line->pointCount - 1; p++)
-        {
-            Vector2 tangent = { 0 };
-            if (PointSegmentDist(worldPoint, line->points[p], line->points[p + 1], &tangent) <= pad)
-            {
-                UndoAction *undo = PushUndo(phys, UNDO_ERASE_BOOST);
-                if (undo)
-                {
-                    undo->pointCount = line->pointCount;
-                    for (int q = 0; q < line->pointCount; q++) undo->points[q] = line->points[q];
-                }
-
-                DestroyBoostLine(line);
-                return true;
-            }
-        }
-    }
-    return false;
+    UndoAction *undo = PushUndo(phys, UNDO_PAINT_BOOST);
+    if (!undo) return;
+    undo->slot = slot;
+    memcpy(undo->boostSeg, prevMask, sizeof(undo->boostSeg));
 }
 
 int PhysicsAddCannon(PhysicsWorld *phys, Vector2 pos, float angleRad)
@@ -896,30 +1115,28 @@ bool PhysicsUndoLastAction(PhysicsWorld *phys)
     {
         case UNDO_DRAW_STROKE:
         {
-            DrawnBody *drawn = &phys->drawn[action->slot];
-            if (drawn->active)
-            {
-                b2DestroyBody(drawn->bodyId);
-                drawn->active = false;
-                drawn->bodyId = b2_nullBodyId;
-                drawn->pointCount = 0;
-            }
-        } break;
-        case UNDO_DRAW_BOOST:
-        {
-            DestroyBoostLine(&phys->boostLines[action->slot]);
+            DestroyDrawnSlot(phys, action->slot);
         } break;
         case UNDO_ADD_CANNON:
         {
             phys->cannons[action->slot].active = false;
         } break;
-        case UNDO_ERASE_STROKE:
+        case UNDO_SPLIT_STROKE:
         {
-            PhysicsCreateDrawnBody(phys, action->points, action->pointCount, action->color);
+            for (int i = 0; i < action->pieceCount; i++)
+            {
+                DestroyDrawnSlot(phys, action->pieceSlots[i]);
+            }
+            PhysicsCreateDrawnBody(phys, action->points, action->pointCount,
+                                   action->color, action->boostSeg);
         } break;
-        case UNDO_ERASE_BOOST:
+        case UNDO_PAINT_BOOST:
         {
-            PhysicsCreateBoostLine(phys, action->points, action->pointCount);
+            DrawnBody *drawn = &phys->drawn[action->slot];
+            if (drawn->active)
+            {
+                memcpy(drawn->boostSeg, action->boostSeg, sizeof(drawn->boostSeg));
+            }
         } break;
         case UNDO_ERASE_CANNON:
         {
@@ -942,6 +1159,7 @@ float PhysicsDrawnInkUsed(const PhysicsWorld *phys)
     {
         const DrawnBody *drawn = &phys->drawn[i];
         if (!drawn->active) continue;
+        // Local points preserve distances (static, no scale) — length == world length
         used += PolylineLength(drawn->localPoints, drawn->pointCount);
     }
     return used;
@@ -950,11 +1168,15 @@ float PhysicsDrawnInkUsed(const PhysicsWorld *phys)
 float PhysicsBoostInkUsed(const PhysicsWorld *phys)
 {
     float used = 0.0f;
-    for (int i = 0; i < MAX_BOOST_LINES; i++)
+    for (int i = 0; i < MAX_DRAWN_BODIES; i++)
     {
-        const BoostLine *line = &phys->boostLines[i];
-        if (!line->active) continue;
-        used += PolylineLength(line->points, line->pointCount);
+        const DrawnBody *drawn = &phys->drawn[i];
+        if (!drawn->active || (drawn->pointCount < 2)) continue;
+        for (int s = 0; s < drawn->pointCount - 1; s++)
+        {
+            if (!drawn->boostSeg[s]) continue;
+            used += SegLen(drawn->localPoints[s], drawn->localPoints[s + 1]);
+        }
     }
     return used;
 }

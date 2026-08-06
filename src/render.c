@@ -227,14 +227,13 @@ void RenderPhysicsDebug(PhysicsWorld *phys, const LevelDef *level)
 void RenderSketchPreview(const SketchState *sketch)
 {
     if (!sketch->drawing || (sketch->pointCount < 2)) return;
-    Color color = (sketch->tool == TOOL_BOOST_LINE) ? BOOST_ORANGE : sketch->crayonColor;
-    DrawCrayonPolyline(sketch->points, sketch->pointCount, color, STROKE_PHYSICS_RADIUS * 2.0f);
+    DrawCrayonPolyline(sketch->points, sketch->pointCount, sketch->crayonColor, STROKE_PHYSICS_RADIUS * 2.0f);
 }
 
 //----------------------------------------------------------------------------------
-// Build elements: boost lines, cannons, ghost trail, checkpoint flag
+// Build elements: boost overlay, cannons, ghost trail, checkpoint flag
 //----------------------------------------------------------------------------------
-// Small chevron pointing along `dir` — used for boost line direction arrows
+// Small chevron pointing along `dir` — used for cannon barrel direction
 static void DrawDirectionArrow(Vector2 tip, Vector2 dir, float size, Color color)
 {
     Vector2 back = { tip.x - dir.x * size, tip.y - dir.y * size };
@@ -243,31 +242,49 @@ static void DrawDirectionArrow(Vector2 tip, Vector2 dir, float size, Color color
     DrawLineEx((Vector2){ back.x - normal.x, back.y - normal.y }, tip, 3.0f, color);
 }
 
-void RenderBoostLines(const PhysicsWorld *phys)
+void RenderBoostOverlay(const PhysicsWorld *phys)
 {
-    // Continuous stroke like crayon — orange marks it as a speed amp, not a rail
+    // Orange glow on boosted crayon segments
     Color ink = BOOST_ORANGE;
     ink.a = 220;
     Color glow = BOOST_ORANGE;
     glow.a = 70;
-    const Color outline = { 0, 0, 0, 230 };
     const float inkThickness = STROKE_PHYSICS_RADIUS * 2.0f;
-    const float outlineThickness = inkThickness + 3.5f;
 
-    for (int l = 0; l < MAX_BOOST_LINES; l++)
+    for (int d = 0; d < MAX_DRAWN_BODIES; d++)
     {
-        const BoostLine *line = &phys->boostLines[l];
-        if (!line->active || (line->pointCount < 2)) continue;
+        const DrawnBody *drawn = &phys->drawn[d];
+        if (!drawn->active || (drawn->pointCount < 2)) continue;
+        if (!b2Body_IsValid(drawn->bodyId)) continue;
 
-        for (int i = 0; i < line->pointCount - 1; i++)
+        b2Transform xf = PhysicsGetBodyTransform(drawn->bodyId);
+        for (int i = 0; i < drawn->pointCount - 1; i++)
         {
-            DrawLineEx(line->points[i], line->points[i + 1], outlineThickness, outline);
+            if (!drawn->boostSeg[i]) continue;
+            b2Vec2 a = b2TransformPoint(xf, (b2Vec2){ drawn->localPoints[i].x, drawn->localPoints[i].y });
+            b2Vec2 b = b2TransformPoint(xf, (b2Vec2){ drawn->localPoints[i + 1].x, drawn->localPoints[i + 1].y });
+            Vector2 wa = { a.x, a.y };
+            Vector2 wb = { b.x, b.y };
+            DrawLineEx(wa, wb, STROKE_PHYSICS_RADIUS * 2.8f, glow);
+            DrawLineEx(wa, wb, inkThickness, ink);
         }
-        for (int i = 0; i < line->pointCount - 1; i++)
-        {
-            DrawLineEx(line->points[i], line->points[i + 1], STROKE_PHYSICS_RADIUS * 2.8f, glow);
-            DrawLineEx(line->points[i], line->points[i + 1], inkThickness, ink);
-        }
+    }
+}
+
+void RenderToolCursor(const SketchState *sketch, Vector2 worldMouse)
+{
+    if (sketch->tool == TOOL_BOOST_LINE)
+    {
+        Color ring = BOOST_ORANGE;
+        ring.a = sketch->paintingBoost ? 200 : 120;
+        DrawCircleLinesV(worldMouse, BOOST_PAINT_RADIUS, ring);
+        DrawCircleV(worldMouse, 3.0f, ring);
+    }
+    else if (sketch->tool == TOOL_ERASER)
+    {
+        Color ring = { 180, 80, 80, 180 };
+        DrawCircleLinesV(worldMouse, ERASE_RADIUS, ring);
+        DrawCircleV(worldMouse, 3.0f, ring);
     }
 }
 
@@ -644,19 +661,34 @@ void RenderToolBar(const PhysicsWorld *phys, const BuildTool *tools, int toolCou
         DrawRectangleLinesEx(chip, 2.0f, border);
         DrawText(toolLabels[tool], (int)chip.x + 8, (int)chip.y + 6, 16, text);
 
-        if ((tool == TOOL_CRAYON) || (tool == TOOL_BOOST_LINE))
+        if (tool == TOOL_CRAYON)
         {
             // Remaining ink bar (committed strokes only; refunds on erase)
-            float capacity = (tool == TOOL_BOOST_LINE) ? phys->boostLineCapacity : phys->lineCapacity;
-            float used = (tool == TOOL_BOOST_LINE) ? PhysicsBoostInkUsed(phys) : PhysicsDrawnInkUsed(phys);
+            float capacity = phys->lineCapacity;
+            float used = PhysicsDrawnInkUsed(phys);
             float remaining = capacity - used;
             if (remaining < 0.0f) remaining = 0.0f;
             float fraction = (capacity > 0.0f) ? remaining / capacity : 0.0f;
 
             Rectangle bar = { chip.x + 8.0f, chip.y + 30.0f, TOOL_CHIP_W - 60.0f, 10.0f };
-            Color inkColor = (tool == TOOL_BOOST_LINE) ? BOOST_ORANGE : (Color){ 40, 90, 200, 255 };
+            Color inkColor = { 40, 90, 200, 255 };
             DrawRectangleRec(bar, (Color){ 200, 190, 165, 255 });
             DrawRectangleRec((Rectangle){ bar.x, bar.y, bar.width * fraction, bar.height }, inkColor);
+            DrawRectangleLinesEx(bar, 1.0f, CRAYON_BROWN);
+            DrawText(TextFormat("%.0f", remaining), (int)(bar.x + bar.width + 6.0f), (int)bar.y - 2, 14, text);
+        }
+        else if (tool == TOOL_BOOST_LINE)
+        {
+            // Boost paint budget — length of painted segments on crayon strokes
+            float capacity = phys->boostLineCapacity;
+            float used = PhysicsBoostInkUsed(phys);
+            float remaining = capacity - used;
+            if (remaining < 0.0f) remaining = 0.0f;
+            float fraction = (capacity > 0.0f) ? remaining / capacity : 0.0f;
+
+            Rectangle bar = { chip.x + 8.0f, chip.y + 30.0f, TOOL_CHIP_W - 60.0f, 10.0f };
+            DrawRectangleRec(bar, (Color){ 200, 190, 165, 255 });
+            DrawRectangleRec((Rectangle){ bar.x, bar.y, bar.width * fraction, bar.height }, BOOST_ORANGE);
             DrawRectangleLinesEx(bar, 1.0f, CRAYON_BROWN);
             DrawText(TextFormat("%.0f", remaining), (int)(bar.x + bar.width + 6.0f), (int)bar.y - 2, 14, text);
         }
@@ -675,7 +707,7 @@ void RenderToolBar(const PhysicsWorld *phys, const BuildTool *tools, int toolCou
         }
         else if (tool == TOOL_ERASER)
         {
-            DrawText("hold LMB and sweep", (int)chip.x + 8, (int)chip.y + 28, 13, text);
+            DrawText("carve with LMB", (int)chip.x + 8, (int)chip.y + 28, 13, text);
         }
     }
 }

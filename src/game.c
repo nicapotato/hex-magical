@@ -384,9 +384,8 @@ static bool SaveCurrentSolution(void)
     const char *path = GetCurrentSolutionPath();
     if (SolutionSave(&solutionScratch, path))
     {
-        fprintf(stderr, "SOLUTION: saved %d strokes, %d boosts, %d cannons to %s\n",
-                solutionScratch.strokeCount, solutionScratch.boostCount,
-                solutionScratch.cannonCount, path);
+        fprintf(stderr, "SOLUTION: saved %d strokes, %d cannons to %s\n",
+                solutionScratch.strokeCount, solutionScratch.cannonCount, path);
         PlatformSyncFiles();
         return true;
     }
@@ -412,9 +411,8 @@ static void RestoreCurrentSolution(void)
     physics.tunables = solutionScratch.tunables; // ball is rebuilt with the recorded knobs
     LoadCurrentLevel();
     SolutionApply(&solutionScratch, &physics);
-    fprintf(stderr, "SOLUTION: restored %d strokes, %d boosts, %d cannons from %s\n",
-            solutionScratch.strokeCount, solutionScratch.boostCount,
-            solutionScratch.cannonCount, path);
+    fprintf(stderr, "SOLUTION: restored %d strokes, %d cannons from %s\n",
+            solutionScratch.strokeCount, solutionScratch.cannonCount, path);
 }
 
 // F8: delete the saved solution for the current level
@@ -711,6 +709,7 @@ void GameUpdateDrawFrame(void)
     Vector2 worldMouse = GetScreenToWorld2D(uiMouse, camera);  // sketching / no-build
     bool lmbDown = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
     bool lmbPressed = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    bool rmbDown = IsMouseButtonDown(MOUSE_BUTTON_RIGHT);
     bool rmbPressed = IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
 
     // Update
@@ -938,7 +937,8 @@ void GameUpdateDrawFrame(void)
                 // register inside, splitting the stroke around the zone
                 bool inNoBuild = TiledLevelNoBuildContains(GetTiledLevel(levelIndex), worldMouse);
 
-                SketchUpdate(&sketch, &physics, worldMouse, sketchLmbDown, sketchLmbPressed, rmbPressed, inNoBuild);
+                SketchUpdate(&sketch, &physics, worldMouse, sketchLmbDown, sketchLmbPressed,
+                             rmbDown, rmbPressed, inNoBuild);
             }
 
             PhysicsStep(&physics, dt);
@@ -1036,9 +1036,10 @@ void GameUpdateDrawFrame(void)
             BeginMode2D(camera); // world space: pans/zooms, HUD below does not
                 RenderTiledLevel(GetTiledLevel(levelIndex), viewPan); // bg + tiles + zones
                 if (building) RenderGhostTrail(&physics);    // last run, build phase only
-                RenderBoostLines(&physics);
                 RenderPhysics(&physics);
+                RenderBoostOverlay(&physics);
                 RenderSketchPreview(&sketch);
+                if (building) RenderToolCursor(&sketch, worldMouse);
                 RenderCannons(&physics);
                 RenderCannonPreview(&sketch);
                 RenderCheckpointFlag(&physics);
