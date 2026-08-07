@@ -16,10 +16,10 @@
 *     - Optional polygon/rect objects named "anti-gravity" with required custom
 *       property "gravity-angle" (float degrees): ball inside gets gravity rotated
 *       that many degrees clockwise from default down
-*     - Optional backgrounds (drawn behind terrain, no physics):
-*         * Tile objects with a gid (Insert Tile from an image-collection tileset),
-*           typically on an object layer named "background"
-*         * Image layers (<imagelayer> with an <image> child)
+*     - Optional decorative tile objects / image layers (no physics):
+*         * Object layer "background" (or any name other than "art"): drawn behind terrain
+*         * Object layer "art": tile objects drawn above terrain (z above the tile layer)
+*         * Image layers (<imagelayer> with an <image> child): always behind terrain
 *         * Layer Parallax Factor in Tiled (parallaxx / parallaxy) is honored —
 *           1 = locked to the world, 0 = locked to the camera
 *     - Required custom properties on the map (Map > Custom Properties in Tiled):
@@ -47,8 +47,8 @@
 #define TILED_MAX_TILESETS 8
 #define TILED_MAX_ANIM_FRAMES 8
 #define TILED_MAX_ANIMATED_TILES 32
-#define TILED_MAX_TILE_IMAGES 32 // per collection-of-images tileset
-#define TILED_MAX_DECORS 16      // background images / tile objects per map
+#define TILED_MAX_TILE_IMAGES 128 // per collection-of-images tileset
+#define TILED_MAX_DECORS 128      // background images / tile objects per map
 
 // One tile's animation cycle from the .tsx (<animation>/<frame>).
 typedef struct TiledTileAnim
@@ -83,11 +83,12 @@ typedef struct TiledTileset
     int animCount;
 } TiledTileset;
 
-// Decorative image drawn behind terrain (tile object or imagelayer). No physics.
+// Decorative image (tile object or imagelayer). No physics.
 typedef struct TiledDecor
 {
     Texture2D texture;
     bool ownsTexture; // true for imagelayer images; false when borrowed from a tileset
+    bool aboveTerrain; // true for object layer "art" (drawn after terrain tiles)
     Rectangle src;
     Rectangle dest;   // canvas coords at parallax 1,1 (tile-object y converted to top-left)
     float parallaxX;  // Tiled layer parallax factor (1 = world-locked)
@@ -135,7 +136,7 @@ typedef struct TiledLevel
     GravityZone antiGravity[TILED_MAX_ZONES];
     int antiGravityCount;
 
-    TiledDecor decors[TILED_MAX_DECORS]; // backgrounds / prop images, drawn behind terrain
+    TiledDecor decors[TILED_MAX_DECORS]; // prop images; aboveTerrain selects draw pass
     int decorCount;
 
     LevelDef def;      // ready to hand to PhysicsLoadLevel (geometry points into this struct)
@@ -152,7 +153,7 @@ bool TiledLevelFileChanged(const TiledLevel *lvl);
 // True when the canvas-space point sits inside any no-build zone
 bool TiledLevelNoBuildContains(const TiledLevel *lvl, Vector2 p);
 
-// Draw backgrounds (with parallax against viewPan), terrain, and zone overlays.
+// Draw backgrounds, terrain, art (above terrain), and zone overlays.
 // viewPan is the camera target offset from level center (same value as game.c).
 void RenderTiledLevel(const TiledLevel *lvl, Vector2 viewPan);
 

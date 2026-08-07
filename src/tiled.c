@@ -1103,7 +1103,7 @@ static void UnloadLevelDecors(TiledLevel *lvl)
     lvl->decorCount = 0;
 }
 
-static bool PushDecor(TiledLevel *lvl, Texture2D texture, bool ownsTexture,
+static bool PushDecor(TiledLevel *lvl, Texture2D texture, bool ownsTexture, bool aboveTerrain,
                       Rectangle src, Rectangle dest, float parallaxX, float parallaxY,
                       float opacity)
 {
@@ -1118,6 +1118,7 @@ static bool PushDecor(TiledLevel *lvl, Texture2D texture, bool ownsTexture,
     lvl->decors[lvl->decorCount++] = (TiledDecor){
         .texture = texture,
         .ownsTexture = ownsTexture,
+        .aboveTerrain = aboveTerrain,
         .src = src,
         .dest = dest,
         .parallaxX = parallaxX,
@@ -1127,7 +1128,24 @@ static bool PushDecor(TiledLevel *lvl, Texture2D texture, bool ownsTexture,
     return true;
 }
 
-// Tile objects (gid=) and imagelayers become decorative backgrounds.
+static void DrawDecorsPass(const TiledLevel *lvl, Vector2 viewPan, bool aboveTerrain)
+{
+    for (int i = 0; i < lvl->decorCount; i++)
+    {
+        const TiledDecor *d = &lvl->decors[i];
+        if (d->aboveTerrain != aboveTerrain) continue;
+        if (d->texture.id == 0) continue;
+        Rectangle dest = d->dest;
+        dest.x += viewPan.x * (1.0f - d->parallaxX);
+        dest.y += viewPan.y * (1.0f - d->parallaxY);
+        Color tint = WHITE;
+        tint.a = (unsigned char)(d->opacity * 255.0f + 0.5f);
+        DrawTexturePro(d->texture, d->src, dest, (Vector2){ 0, 0 }, 0.0f, tint);
+    }
+}
+
+// Tile objects (gid=) and imagelayers become decorative images.
+// Object layer "art" draws above terrain; everything else draws behind.
 // Layer parallaxx/parallaxy from Tiled are preserved (default 1,1).
 static bool ParseBackgroundDecors(const char *xml, const char *mapDir, TiledLevel *lvl)
 {
@@ -1141,11 +1159,14 @@ static bool ParseBackgroundDecors(const char *xml, const char *mapDir, TiledLeve
             float parallaxX = 1.0f, parallaxY = 1.0f;
             float layerOffX = 0.0f, layerOffY = 0.0f;
             float layerOpacity = 1.0f;
+            char layerName[64] = { 0 };
             ParseFloatAttr(p, " parallaxx=\"", &parallaxX);
             ParseFloatAttr(p, " parallaxy=\"", &parallaxY);
             ParseFloatAttr(p, " offsetx=\"", &layerOffX);
             ParseFloatAttr(p, " offsety=\"", &layerOffY);
             ParseFloatAttr(p, " opacity=\"", &layerOpacity);
+            ParseQuotedAttr(p, "name=\"", layerName, sizeof(layerName));
+            bool aboveTerrain = (strcmp(layerName, "art") == 0);
 
             const char *groupEnd = strstr(p, "</objectgroup>");
             if (groupEnd == NULL)
@@ -1216,7 +1237,7 @@ static bool ParseBackgroundDecors(const char *xml, const char *mapDir, TiledLeve
                     ow * lvl->scale,
                     oh * lvl->scale
                 };
-                if (!PushDecor(lvl, tex, false, src, dest, parallaxX, parallaxY,
+                if (!PushDecor(lvl, tex, false, aboveTerrain, src, dest, parallaxX, parallaxY,
                                layerOpacity * objOpacity)) return false;
                 obj = objEnd;
             }
@@ -1293,7 +1314,7 @@ static bool ParseBackgroundDecors(const char *xml, const char *mapDir, TiledLeve
                 (float)imgW * lvl->scale,
                 (float)imgH * lvl->scale
             };
-            if (!PushDecor(lvl, tex, true, src, dest, parallaxX, parallaxY, layerOpacity)) return false;
+            if (!PushDecor(lvl, tex, true, false, src, dest, parallaxX, parallaxY, layerOpacity)) return false;
 
             p = layerEnd + strlen("</imagelayer>");
             continue;
@@ -1656,19 +1677,10 @@ void RenderTiledLevel(const TiledLevel *lvl, Vector2 viewPan)
     float tw = (float)lvl->tileWidth;
     float th = (float)lvl->tileHeight;
 
-    // Backgrounds first. Parallax: Mode2D already subtracts viewPan, so we add
-    // pan * (1 - factor) here — net motion is pan * factor (0 = screen-locked).
-    for (int i = 0; i < lvl->decorCount; i++)
-    {
-        const TiledDecor *d = &lvl->decors[i];
-        if (d->texture.id == 0) continue;
-        Rectangle dest = d->dest;
-        dest.x += viewPan.x * (1.0f - d->parallaxX);
-        dest.y += viewPan.y * (1.0f - d->parallaxY);
-        Color tint = WHITE;
-        tint.a = (unsigned char)(d->opacity * 255.0f + 0.5f);
-        DrawTexturePro(d->texture, d->src, dest, (Vector2){ 0, 0 }, 0.0f, tint);
-    }
+    // Behind-terrain props / imagelayers first.
+    // Parallax: Mode2D already subtracts viewPan, so we add pan * (1 - factor)
+    // here — net motion is pan * factor (0 = screen-locked).
+    DrawDecorsPass(lvl, viewPan, false);
 
     // Soft crayon fill under collision so solids read even where terrain art is sparse.
     // Last 4 boxes are the off-canvas boundary walls — skip them.
@@ -1716,6 +1728,9 @@ void RenderTiledLevel(const TiledLevel *lvl, Vector2 viewPan)
             DrawTiledTile(tex, src, dest, DecodeGidFlags(gid));
         }
     }
+
+    // Object layer "art" — above terrain tiles, below zone overlays / gameplay.
+    DrawDecorsPass(lvl, viewPan, true);
 
     DrawZones(lvl->noBuild, lvl->noBuildCount, "no build", (Color){ 210, 50, 50, 255 });
     DrawZones(lvl->pits, lvl->pitCount, "pit", (Color){ 70, 50, 40, 255 });

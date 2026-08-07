@@ -9,7 +9,9 @@
  </tile>
  <tile id="1">
   <objectgroup draworder="index" id="2">
-   <object id="2" x="8" y="0.0625" width="7.875" height="7.9375"/>
+   <object id="3" x="0.0625" y="8.0625">
+    <polygon points="0,0 8,0 7.9375,-8.0625 15.875,-8.125 15.9375,-0.0625 8.0625,0.0625 8.125,7.6875 0,7.875"/>
+   </object>
   </objectgroup>
  </tile>
  <tile id="2">
