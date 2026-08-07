@@ -20,6 +20,13 @@
 #define TILED_MAX_TILE_TYPES 512
 #define TILED_MAX_SHAPES_PER_TILE 4
 
+// Tiled global-tile-id flip flags (top 4 bits). See docs.mapeditor.org global-tile-ids.
+#define TILED_FLIPPED_HORIZONTALLY 0x80000000u
+#define TILED_FLIPPED_VERTICALLY   0x40000000u
+#define TILED_FLIPPED_DIAGONALLY   0x20000000u
+#define TILED_FLIPPED_HEX_120      0x10000000u
+#define TILED_GID_MASK             0x0FFFFFFFu
+
 typedef struct TileCollisionShape
 {
     Vector2 points[STATIC_POLYGON_MAX_POINTS];
@@ -96,10 +103,12 @@ static int ParseCsv(const char *dataStart, int *out, int maxCount)
     int count = 0;
     while ((p < end) && (count < maxCount))
     {
+        // GIDs are unsigned 32-bit (flip flags in the high bits). Accept digits only;
+        // Tiled CSV writes the full unsigned value, never a leading '-'.
         while ((p < end) && ((*p < '0') || (*p > '9'))) p++;
         if (p >= end) break;
         char *next = NULL;
-        out[count++] = (int)strtol(p, &next, 10);
+        out[count++] = (int)strtoul(p, &next, 10);
         p = next;
     }
     return count;
@@ -512,8 +521,77 @@ static bool IsFullTileCollision(const TileCollision *collision, float tileWidth,
 }
 
 //----------------------------------------------------------------------------------
-// Collision: greedy-merge solid tiles into rectangles
+// GID helpers (flip flags live in the high bits of the 32-bit global tile id)
 //----------------------------------------------------------------------------------
+typedef struct TiledGidFlags
+{
+    bool flipH;
+    bool flipV;
+    bool flipD;
+} TiledGidFlags;
+
+static TiledGidFlags DecodeGidFlags(int gid)
+{
+    unsigned int raw = (unsigned int)gid;
+    return (TiledGidFlags){
+        .flipH = (raw & TILED_FLIPPED_HORIZONTALLY) != 0,
+        .flipV = (raw & TILED_FLIPPED_VERTICALLY) != 0,
+        .flipD = (raw & TILED_FLIPPED_DIAGONALLY) != 0
+    };
+}
+
+// Apply Tiled orthogonal flips in documented order: diagonal (axis swap), then H, then V.
+static Vector2 TransformTileLocalPoint(Vector2 p, float tileW, float tileH, TiledGidFlags flags)
+{
+    float x = p.x;
+    float y = p.y;
+    if (flags.flipD)
+    {
+        float tmp = x;
+        x = y;
+        y = tmp;
+    }
+    if (flags.flipH) x = tileW - x;
+    if (flags.flipV) y = tileH - y;
+    return (Vector2){ x, y };
+}
+
+// Odd number of reflections reverses winding — Box2D wants a consistent order.
+static bool GidFlagsReverseWinding(TiledGidFlags flags)
+{
+    int reflections = (flags.flipD ? 1 : 0) + (flags.flipH ? 1 : 0) + (flags.flipV ? 1 : 0);
+    return (reflections % 2) != 0;
+}
+
+// Draw a terrain tile with Tiled H/V/D flags. Diagonal is remapped the same way
+// Tiled's CellRenderer does: 90° rotation, then H' = V, V' = !H.
+static void DrawTiledTile(Texture2D tex, Rectangle src, Rectangle dest, TiledGidFlags flags)
+{
+    float rotation = 0.0f;
+    bool flipH = flags.flipH;
+    bool flipV = flags.flipV;
+
+    if (flags.flipD)
+    {
+        rotation = 90.0f;
+        bool oldH = flipH;
+        flipH = flipV;
+        flipV = !oldH;
+    }
+
+    if (flipH) src.width = -src.width;
+    if (flipV) src.height = -src.height;
+
+    Vector2 origin = { dest.width * 0.5f, dest.height * 0.5f };
+    Rectangle centered = {
+        dest.x + dest.width * 0.5f,
+        dest.y + dest.height * 0.5f,
+        dest.width,
+        dest.height
+    };
+    DrawTexturePro(tex, src, centered, origin, rotation, WHITE);
+}
+
 static bool ResolveGid(const TiledTileset *tilesets, int tilesetCount, int gid,
                        int *outTsIndex, int *outLocalId);
 
@@ -589,6 +667,9 @@ static int BuildCustomTilePolygons(const int *gids, int w, int h,
             const TileCollision *collision = &collisions[tsIndex][tileId];
             if (IsFullTileCollision(collision, tileW, tileH)) continue;
 
+            TiledGidFlags flags = DecodeGidFlags(gid);
+            bool reverseWinding = GidFlagsReverseWinding(flags);
+
             for (int s = 0; s < collision->shapeCount; s++)
             {
                 if (polygonCount >= maxPolygons)
@@ -602,9 +683,12 @@ static int BuildCustomTilePolygons(const int *gids, int w, int h,
                 dest->pointCount = source->pointCount;
                 for (int p = 0; p < source->pointCount; p++)
                 {
+                    int srcIndex = reverseWinding ? (source->pointCount - 1 - p) : p;
+                    Vector2 local = TransformTileLocalPoint(source->points[srcIndex],
+                                                            tileW, tileH, flags);
                     dest->points[p] = (Vector2){
-                        offset.x + ((float)x * tileW + source->points[p].x) * scale,
-                        offset.y + ((float)y * tileH + source->points[p].y) * scale
+                        offset.x + ((float)x * tileW + local.x) * scale,
+                        offset.y + ((float)y * tileH + local.y) * scale
                     };
                 }
             }
@@ -616,15 +700,17 @@ static int BuildCustomTilePolygons(const int *gids, int w, int h,
 //----------------------------------------------------------------------------------
 // Tileset refs + tile animations
 //----------------------------------------------------------------------------------
-// Strip Tiled flip flags (top 3 bits) before resolving against firstgid ranges.
+// Strip Tiled flip flags before resolving against firstgid ranges.
+// GIDs with the horizontal flip bit set are negative when stored in a signed int —
+// never reject those with `gid <= 0`; only the tile-id nibble being zero means empty.
 static bool ResolveGid(const TiledTileset *tilesets, int tilesetCount, int gid,
                        int *outTsIndex, int *outLocalId)
 {
-    if (gid <= 0) return false;
-    unsigned int raw = (unsigned int)gid & 0x1FFFFFFFu;
+    unsigned int tileId = (unsigned int)gid & TILED_GID_MASK;
+    if (tileId == 0) return false;
     for (int i = 0; i < tilesetCount; i++)
     {
-        int localId = (int)raw - tilesets[i].firstGid;
+        int localId = (int)tileId - tilesets[i].firstGid;
         if ((localId >= 0) && (localId < tilesets[i].tileCount))
         {
             *outTsIndex = i;
@@ -1079,8 +1165,10 @@ static bool ParseBackgroundDecors(const char *xml, const char *mapDir, TiledLeve
                 }
 
                 // Only tile objects (gid) are decorative images.
+                // Flip-flagged GIDs are negative as signed ints — empty is tile-id 0.
                 int gid = 0;
-                if (!ParseIntAttr(obj, " gid=\"", &gid) || (gid <= 0))
+                if (!ParseIntAttr(obj, " gid=\"", &gid)
+                    || (((unsigned int)gid & TILED_GID_MASK) == 0))
                 {
                     obj = objEnd;
                     continue;
@@ -1625,7 +1713,7 @@ void RenderTiledLevel(const TiledLevel *lvl, Vector2 viewPan)
                 lvl->offset.y + (float)y * th * lvl->scale,
                 tw * lvl->scale, th * lvl->scale
             };
-            DrawTexturePro(tex, src, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
+            DrawTiledTile(tex, src, dest, DecodeGidFlags(gid));
         }
     }
 
