@@ -33,15 +33,18 @@ void RenderCheckpointFlag(const PhysicsWorld *phys);
 // uiMouse is the mouse position in game-canvas coordinates (letterbox-corrected).
 // showPlayButton shows the START/STOP toggle; simulating selects its label.
 // checkpointSet relabels START to show the run resumes from the flag.
+// howToPlayOpen draws the controls help panel over the play field.
 void RenderHud(int levelIndex, bool showTitle, bool showPlayButton,
                bool simulating, bool debugMode, bool levelMenuOpen, bool actMenuOpen,
-               bool checkpointSet, Vector2 uiMouse);
+               bool howToPlayOpen, bool checkpointSet, Vector2 uiMouse);
 Rectangle RenderGetStartButtonRect(void);
 Rectangle RenderGetDebugButtonRect(void);
 Rectangle RenderGetLevelMenuHeaderRect(void);
 Rectangle RenderGetLevelMenuItemRect(int index);   // slot within the current act
 Rectangle RenderGetActMenuHeaderRect(void);
 Rectangle RenderGetActMenuItemRect(int index);
+Rectangle RenderGetHowToPlayButtonRect(void);
+Rectangle RenderGetHowToPlayPanelRect(void);
 
 // Build tool bar (bottom-left, build phase only). `tools` lists the visible
 // tools in display order — zero-capacity resources are simply not in the list.

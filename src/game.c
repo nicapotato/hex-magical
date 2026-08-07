@@ -34,6 +34,7 @@ static SketchState sketch = { 0 };
 static bool debugMode = false;
 static bool levelMenuOpen = false;
 static bool actMenuOpen = false;
+static bool howToPlayOpen = false;
 static bool pauseMenuOpen = false; // ESC menu: world frozen while open
 static bool winMenuShow = true; // false = admiring the finished run
 static bool winSolutionSaved = false;
@@ -286,6 +287,62 @@ static Camera2D GetWorldCamera(void)
     };
 }
 
+// Keep the camera inside the TMX map: no zoom-out past the map, no pan into empty paper.
+static void ClampViewToLevel(const TiledLevel *lvl)
+{
+    if ((lvl == NULL) || !lvl->loaded) return;
+
+    float mapW = (float)lvl->mapWidth * (float)lvl->tileWidth * lvl->scale;
+    float mapH = (float)lvl->mapHeight * (float)lvl->tileHeight * lvl->scale;
+    if ((mapW <= 0.0f) || (mapH <= 0.0f)) return;
+
+    float mapLeft = lvl->offset.x;
+    float mapTop = lvl->offset.y;
+    float mapRight = mapLeft + mapW;
+    float mapBottom = mapTop + mapH;
+
+    float viewW = (float)target.texture.width;
+    float viewH = (float)GAME_SCREEN_HEIGHT;
+    if ((viewW <= 0.0f) || (viewH <= 0.0f)) return;
+
+    float minZoom = VIEW_ZOOM_MIN;
+    float zoomForW = viewW / mapW;
+    float zoomForH = viewH / mapH;
+    if (zoomForW > minZoom) minZoom = zoomForW;
+    if (zoomForH > minZoom) minZoom = zoomForH;
+
+    if (viewZoom < minZoom) viewZoom = minZoom;
+    if (viewZoom > VIEW_ZOOM_MAX) viewZoom = VIEW_ZOOM_MAX;
+
+    float halfViewW = viewW * 0.5f / viewZoom;
+    float halfViewH = viewH * 0.5f / viewZoom;
+    float centerX = (float)GAME_SCREEN_WIDTH * 0.5f;
+    float centerY = (float)GAME_SCREEN_HEIGHT * 0.5f;
+    float targetX = centerX + viewPan.x;
+    float targetY = centerY + viewPan.y;
+
+    float minTargetX = mapLeft + halfViewW;
+    float maxTargetX = mapRight - halfViewW;
+    if (minTargetX > maxTargetX) targetX = (mapLeft + mapRight) * 0.5f;
+    else
+    {
+        if (targetX < minTargetX) targetX = minTargetX;
+        if (targetX > maxTargetX) targetX = maxTargetX;
+    }
+
+    float minTargetY = mapTop + halfViewH;
+    float maxTargetY = mapBottom - halfViewH;
+    if (minTargetY > maxTargetY) targetY = (mapTop + mapBottom) * 0.5f;
+    else
+    {
+        if (targetY < minTargetY) targetY = minTargetY;
+        if (targetY > maxTargetY) targetY = maxTargetY;
+    }
+
+    viewPan.x = targetX - centerX;
+    viewPan.y = targetY - centerY;
+}
+
 // Mouse in view (HUD) coordinates — the render texture fills the whole window
 static Vector2 GetViewMouse(void)
 {
@@ -333,6 +390,7 @@ static void LoadCurrentLevel(void)
 {
     PhysicsLoadLevel(&physics, GetLevelDef(levelIndex));
     SketchInit(&sketch);
+    ClampViewToLevel(GetTiledLevel(levelIndex));
 
     // Default to the first tool the level actually offers
     BuildTool tools[TOOL_COUNT];
@@ -510,6 +568,7 @@ static void QuitToTitle(void)
     screen = SCREEN_TITLE;
     levelMenuOpen = false;
     actMenuOpen = false;
+    howToPlayOpen = false;
     pauseMenuOpen = false;
     PhysicsShutdown(&physics);
 }
@@ -548,10 +607,12 @@ static bool WantsToggleSimulation(bool lmbPressed, Vector2 uiMouse)
 
 static bool IsUiClick(Vector2 uiMouse)
 {
+    if (howToPlayOpen) return true; // help modal owns the click (close / ignore for sketch)
     if (CheckCollisionPointRec(uiMouse, RenderGetDebugButtonRect())) return true;
     if (CheckCollisionPointRec(uiMouse, AdminGetButtonRect())) return true;
     if (CheckCollisionPointRec(uiMouse, RenderGetLevelMenuHeaderRect())) return true;
     if (CheckCollisionPointRec(uiMouse, RenderGetActMenuHeaderRect())) return true;
+    if (CheckCollisionPointRec(uiMouse, RenderGetHowToPlayButtonRect())) return true;
     if (CheckCollisionPointRec(uiMouse, RenderGetStartButtonRect())) return true;
 
     // Tool bar only exists during the build phase
@@ -637,6 +698,7 @@ void GameInit(void)
     debugMode = false;
     levelMenuOpen = false;
     actMenuOpen = false;
+    howToPlayOpen = false;
 }
 
 void GameUpdateDrawFrame(void)
@@ -704,6 +766,9 @@ void GameUpdateDrawFrame(void)
         }
     }
 
+    // Keep the world camera inside the active map's TMX bounds (skip title).
+    if (screen != SCREEN_TITLE) ClampViewToLevel(GetTiledLevel(levelIndex));
+
     Camera2D camera = GetWorldCamera();
     Vector2 uiMouse = GetViewMouse();                          // HUD hit tests
     Vector2 worldMouse = GetScreenToWorld2D(uiMouse, camera);  // sketching / no-build
@@ -726,10 +791,11 @@ void GameUpdateDrawFrame(void)
     else if ((screen == SCREEN_PLAYING) || (screen == SCREEN_WIN))
     {
         // ESC menu (build/run only — the win screen keeps ESC for admire).
-        // Layered like a proper pause: an open dropdown closes first.
+        // Layered: help / dropdowns close first, then pause toggles.
         if ((screen == SCREEN_PLAYING) && IsKeyPressed(KEY_ESCAPE))
         {
-            if (levelMenuOpen || actMenuOpen)
+            if (howToPlayOpen) howToPlayOpen = false;
+            else if (levelMenuOpen || actMenuOpen)
             {
                 levelMenuOpen = false;
                 actMenuOpen = false;
@@ -771,13 +837,32 @@ void GameUpdateDrawFrame(void)
                 lmbDown = false;
             }
 
-            // Act + level dropdowns (only one open at a time)
+            // Act / level / how-to-play (only one overlay open at a time)
             if (lmbPressed)
             {
-                if (CheckCollisionPointRec(uiMouse, RenderGetActMenuHeaderRect()))
+                if (CheckCollisionPointRec(uiMouse, RenderGetHowToPlayButtonRect()))
+                {
+                    howToPlayOpen = !howToPlayOpen;
+                    actMenuOpen = false;
+                    levelMenuOpen = false;
+                    lmbPressed = false;
+                    lmbDown = false;
+                }
+                else if (howToPlayOpen)
+                {
+                    // Click outside the panel (or on dimmed field) closes help
+                    if (!CheckCollisionPointRec(uiMouse, RenderGetHowToPlayPanelRect()))
+                    {
+                        howToPlayOpen = false;
+                    }
+                    lmbPressed = false;
+                    lmbDown = false;
+                }
+                else if (CheckCollisionPointRec(uiMouse, RenderGetActMenuHeaderRect()))
                 {
                     actMenuOpen = !actMenuOpen;
                     levelMenuOpen = false;
+                    howToPlayOpen = false;
                     lmbPressed = false;
                     lmbDown = false;
                 }
@@ -785,6 +870,7 @@ void GameUpdateDrawFrame(void)
                 {
                     levelMenuOpen = !levelMenuOpen;
                     actMenuOpen = false;
+                    howToPlayOpen = false;
                     lmbPressed = false;
                     lmbDown = false;
                 }
@@ -1025,7 +1111,7 @@ void GameUpdateDrawFrame(void)
 
         if (screen == SCREEN_TITLE)
         {
-            RenderHud(0, true, false, false, false, false, false, false, uiMouse);
+            RenderHud(0, true, false, false, false, false, false, false, false, uiMouse);
         }
         else
         {
@@ -1054,7 +1140,7 @@ void GameUpdateDrawFrame(void)
 
             RenderHud(levelIndex, false, showPlayButton,
                       PhysicsIsSimulating(&physics), debugMode, levelMenuOpen,
-                      actMenuOpen, physics.checkpointSet, uiMouse);
+                      actMenuOpen, howToPlayOpen, physics.checkpointSet, uiMouse);
             if ((screen == SCREEN_PLAYING) && building)
             {
                 BuildTool tools[TOOL_COUNT];
