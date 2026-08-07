@@ -21,7 +21,8 @@ CFLAGS += -I$(SRC_DIR) -I$(RAYLIB_SRC) -I$(RAYLIB_SRC)/external
 CFLAGS += -I$(BOX2D_INC) -I$(BOX2D_SRC) -DBOX2D_DISABLE_SIMD -ffp-contract=off
 
 LDFLAGS = -L$(RAYLIB_SRC) -lraylib.web -lidbfs.js
-LDFLAGS += -s USE_GLFW=3 -s WASM=1 -s TOTAL_MEMORY=128MB -s STACK_SIZE=1MB -s FORCE_FILESYSTEM=1 -s MINIFY_HTML=0
+# 256MB: terrain + vis tile layers across the level registry need ~142MB static alone.
+LDFLAGS += -s USE_GLFW=3 -s WASM=1 -s TOTAL_MEMORY=256MB -s STACK_SIZE=1MB -s FORCE_FILESYSTEM=1 -s MINIFY_HTML=0
 LDFLAGS += --preload-file $(RESOURCES_DIR)@/resources
 LDFLAGS += --pre-js $(WEB_STORAGE_JS)
 LDFLAGS += --shell-file $(SHELL_HTML)
@@ -35,7 +36,8 @@ GAME_SRCS = \
 	$(SRC_DIR)/render.c \
 	$(SRC_DIR)/admin.c \
 	$(SRC_DIR)/solution.c \
-	$(SRC_DIR)/tiled.c
+	$(SRC_DIR)/tiled.c \
+	$(SRC_DIR)/lighting.c
 
 BOX2D_SRCS = \
 	$(BOX2D_SRC)/aabb.c \
