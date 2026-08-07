@@ -9,8 +9,10 @@
 
 #include <stdio.h>
 
-#define ADMIN_BTN_W 80.0f
-#define ADMIN_BTN_H 40.0f
+#define ADMIN_BTN_W 64.0f
+#define ADMIN_BTN_H 30.0f
+#define ADMIN_BTN_Y 8.0f
+#define ADMIN_DEBUG_W 64.0f // matches render.c DEBUG chip — keep in sync
 #define ADMIN_PANEL_W 248.0f
 #define ADMIN_PAD 10.0f
 #define ADMIN_FONT 14
@@ -158,10 +160,10 @@ bool AdminIsOpen(void)
 
 Rectangle AdminGetButtonRect(void)
 {
-    // Sits left of DEBUG (80 wide at the top-right edge)
+    // Sits left of DEBUG on the shared top bar
     return (Rectangle){
-        (float)GameGetViewWidth() - 80.0f - 8.0f - ADMIN_BTN_W - 8.0f,
-        12.0f,
+        (float)GameGetViewWidth() - ADMIN_DEBUG_W - 8.0f - ADMIN_BTN_W - 8.0f,
+        ADMIN_BTN_Y,
         ADMIN_BTN_W,
         ADMIN_BTN_H
     };
@@ -233,8 +235,8 @@ static void DrawAdminButton(Vector2 mouse)
 
     DrawRectangleRec(btn, fill);
     DrawRectangleLinesEx(btn, 2.0f, border);
-    int tw = MeasureText("ADMIN", 18);
-    DrawText("ADMIN", (int)btn.x + ((int)btn.width - tw) / 2, (int)btn.y + 11, 18, text);
+    int tw = MeasureText("ADMIN", 14);
+    DrawText("ADMIN", (int)btn.x + ((int)btn.width - tw) / 2, (int)btn.y + 7, 14, text);
 }
 
 void AdminDraw(const PhysicsWorld *phys, Vector2 mouse)

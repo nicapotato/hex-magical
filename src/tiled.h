@@ -7,7 +7,9 @@
 *       Tiled tile animations (<animation>/<frame>) are played at draw time.
 *       Collection-of-images tilesets (columns="0", per-tile <image>) are supported
 *       for decorative backgrounds — they never contribute terrain collision.
-*     - Tile layer "terrain": visual tiles whose TSX collision objects define physics
+*     - Tile layer "terrain": visual + collision tiles (TSX collision objects)
+*     - Optional extra tile layers "terrain-*" and "sprites": visual only (drawn
+*       above terrain, below art). Collision always comes from "terrain" alone.
 *     - Point object named "ball-spawn" (or "ball")
 *     - Polygon/rect object named "finish-line": ball touching it wins
 *     - Optional polygon/rect objects named "no-build": players cannot sketch inside
@@ -16,10 +18,16 @@
 *     - Optional polygon/rect objects named "anti-gravity" with required custom
 *       property "gravity-angle" (float degrees): ball inside gets gravity rotated
 *       that many degrees clockwise from default down
-*     - Optional backgrounds (drawn behind terrain, no physics):
-*         * Tile objects with a gid (Insert Tile from an image-collection tileset),
-*           typically on an object layer named "background"
-*         * Image layers (<imagelayer> with an <image> child)
+*     - Optional polygon object named "sun-track": closed sky path for a day/night
+*       cycle (sun travels one half, moon the other). Also enables drifting
+*       clouds + sun lighting/god-rays. Sprites from
+*       resources/spritesheet/isolated/{sun,moon,cloud-1,cloud-2}.png.
+*     - Optional rect/polygon named "clouds": spawn band for drifting clouds
+*       (falls back to the sun-track sky bounds when absent).
+*     - Optional decorative tile objects / image layers (no physics):
+*         * Object layer "background" (or any name other than "art"): drawn behind terrain
+*         * Object layer "art": tile objects drawn above terrain (z above the tile layer)
+*         * Image layers (<imagelayer> with an <image> child): always behind terrain
 *         * Layer Parallax Factor in Tiled (parallaxx / parallaxy) is honored —
 *           1 = locked to the world, 0 = locked to the camera
 *     - Required custom properties on the map (Map > Custom Properties in Tiled):
@@ -47,8 +55,19 @@
 #define TILED_MAX_TILESETS 8
 #define TILED_MAX_ANIM_FRAMES 8
 #define TILED_MAX_ANIMATED_TILES 32
-#define TILED_MAX_TILE_IMAGES 32 // per collection-of-images tileset
-#define TILED_MAX_DECORS 16      // background images / tile objects per map
+#define TILED_MAX_TILE_IMAGES 128 // per collection-of-images tileset
+#define TILED_MAX_DECORS 128      // background images / tile objects per map
+#define TILED_CLOUD_TEX_COUNT 2   // cloud-1.png, cloud-2.png
+#define TILED_MAX_VIS_LAYERS 6    // extra visual tile layers (terrain-*, sprites)
+
+// Per-frame celestial snapshot for lighting (world canvas coords).
+typedef struct CelestialFrame
+{
+    bool active;
+    Vector2 bodyWorld; // sun or moon position on the track
+    float sunIntensity; // 0..1 — drives light / god-rays
+    float night;        // 0..1
+} CelestialFrame;
 
 // One tile's animation cycle from the .tsx (<animation>/<frame>).
 typedef struct TiledTileAnim
@@ -83,11 +102,12 @@ typedef struct TiledTileset
     int animCount;
 } TiledTileset;
 
-// Decorative image drawn behind terrain (tile object or imagelayer). No physics.
+// Decorative image (tile object or imagelayer). No physics.
 typedef struct TiledDecor
 {
     Texture2D texture;
     bool ownsTexture; // true for imagelayer images; false when borrowed from a tileset
+    bool aboveTerrain; // true for object layer "art" (drawn after terrain tiles)
     Rectangle src;
     Rectangle dest;   // canvas coords at parallax 1,1 (tile-object y converted to top-left)
     float parallaxX;  // Tiled layer parallax factor (1 = world-locked)
@@ -116,6 +136,10 @@ typedef struct TiledLevel
     int cannonCount;
 
     int terrainGids[TILED_MAX_W * TILED_MAX_H];
+    // Extra visual-only tile layers (terrain-2, sprites, …), document order.
+    int visGids[TILED_MAX_VIS_LAYERS][TILED_MAX_W * TILED_MAX_H];
+    char visLayerNames[TILED_MAX_VIS_LAYERS][32];
+    int visLayerCount;
     TiledTileset tilesets[TILED_MAX_TILESETS];
     int tilesetCount;
 
@@ -135,7 +159,16 @@ typedef struct TiledLevel
     GravityZone antiGravity[TILED_MAX_ZONES];
     int antiGravityCount;
 
-    TiledDecor decors[TILED_MAX_DECORS]; // backgrounds / prop images, drawn behind terrain
+    // Optional day/night celestial path (act-3 map-1 pilot). Decorative only.
+    bool hasSunTrack;
+    PolyZone sunTrack;
+    bool hasCloudBand;
+    PolyZone cloudBand; // optional "clouds" rect — spawn band for drifting clouds
+    Texture2D sunTex;
+    Texture2D moonTex;
+    Texture2D cloudTex[TILED_CLOUD_TEX_COUNT];
+
+    TiledDecor decors[TILED_MAX_DECORS]; // prop images; aboveTerrain selects draw pass
     int decorCount;
 
     LevelDef def;      // ready to hand to PhysicsLoadLevel (geometry points into this struct)
@@ -152,8 +185,17 @@ bool TiledLevelFileChanged(const TiledLevel *lvl);
 // True when the canvas-space point sits inside any no-build zone
 bool TiledLevelNoBuildContains(const TiledLevel *lvl, Vector2 p);
 
-// Draw backgrounds (with parallax against viewPan), terrain, and zone overlays.
+// Draw backgrounds, terrain, art (above terrain), and zone overlays.
 // viewPan is the camera target offset from level center (same value as game.c).
+// When the level has a sun-track, also fills the lighting cloud-mask RT.
 void RenderTiledLevel(const TiledLevel *lvl, Vector2 viewPan);
 
+// Latest celestial sample from the most recent RenderTiledLevel call.
+CelestialFrame TiledLevelGetCelestialFrame(void);
+
+// Draw drifting clouds into the current target (used for the lighting cloud-mask pass).
+// Call while Mode2D is active. No-op when the level has no sun-track.
+void TiledLevelRenderCloudMask(const TiledLevel *lvl);
+
 #endif // TILED_H
+

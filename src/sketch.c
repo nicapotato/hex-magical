@@ -1,13 +1,15 @@
 /*******************************************************************************************
 *
 *   sketch.c - Build tools: stroke capture (RDP simplify + Chaikin rounding),
-*   cannon aim-and-place, checkpoint flag. Stroke ink is budgeted per level.
+*   boost paint on existing lines, cannon aim-and-place, checkpoint flag.
+*   Stroke ink is budgeted per level.
 *
 ********************************************************************************************/
 
 #include "sketch.h"
 
 #include <math.h>
+#include <string.h>
 
 static const float SAMPLE_DIST = 5.0f;
 // Light simplify — keep path detail so capsule chain follows the ink
@@ -115,10 +117,9 @@ static int ChaikinPass(const Vector2 *in, int count, Vector2 *out, int maxOut)
 }
 
 //----------------------------------------------------------------------------------
-// Finalize the accumulated points (RDP denoise + Chaikin rounding) into either a
-// solid crayon body or a boost line, and reset accumulation. Strokes split by
-// no-build zones call this once per segment, so each side of the zone becomes
-// its own piece.
+// Finalize the accumulated points (RDP denoise + Chaikin rounding) into a solid
+// crayon body and reset accumulation. Strokes split by no-build zones call this
+// once per segment, so each side of the zone becomes its own piece.
 //----------------------------------------------------------------------------------
 static void FinalizeSegment(SketchState *sketch, PhysicsWorld *phys)
 {
@@ -147,22 +148,25 @@ static void FinalizeSegment(SketchState *sketch, PhysicsWorld *phys)
             next = tmp;
         }
 
-        if (sketch->tool == TOOL_BOOST_LINE) PhysicsCreateBoostLine(phys, cur, n);
-        else PhysicsCreateDrawnBody(phys, cur, n, sketch->crayonColor);
+        PhysicsCreateDrawnBody(phys, cur, n, sketch->crayonColor, NULL);
     }
 
     sketch->pointCount = 0;
     sketch->inkUsedThisStroke = 0.0f;
 }
 
-// Remaining ink for the active stroke tool: level capacity minus what already
-// sits on the canvas (erasing refunds by removing geometry) minus the stroke
-// currently being drawn
+// Remaining ink for the crayon tool: level capacity minus committed geometry
+// minus the stroke currently being drawn
 static float RemainingInk(const SketchState *sketch, const PhysicsWorld *phys)
 {
-    float capacity = (sketch->tool == TOOL_BOOST_LINE) ? phys->boostLineCapacity : phys->lineCapacity;
-    float used = (sketch->tool == TOOL_BOOST_LINE) ? PhysicsBoostInkUsed(phys) : PhysicsDrawnInkUsed(phys);
-    return capacity - used - sketch->inkUsedThisStroke;
+    return phys->lineCapacity - PhysicsDrawnInkUsed(phys) - sketch->inkUsedThisStroke;
+}
+
+static void ClearPaintGesture(SketchState *sketch)
+{
+    sketch->paintingBoost = false;
+    sketch->paintBoostApply = true;
+    memset(sketch->paintUndoRecorded, 0, sizeof(sketch->paintUndoRecorded));
 }
 
 //----------------------------------------------------------------------------------
@@ -178,6 +182,7 @@ void SketchInit(SketchState *sketch)
     sketch->aimingCannon = false;
     sketch->cannonAnchor = (Vector2){ 0.0f, 0.0f };
     sketch->cannonAngle = 0.0f;
+    ClearPaintGesture(sketch);
 }
 
 void SketchCancel(SketchState *sketch)
@@ -186,6 +191,7 @@ void SketchCancel(SketchState *sketch)
     sketch->pointCount = 0;
     sketch->inkUsedThisStroke = 0.0f;
     sketch->aimingCannon = false;
+    ClearPaintGesture(sketch);
 }
 
 //----------------------------------------------------------------------------------
@@ -250,6 +256,41 @@ static void UpdateStrokeTool(SketchState *sketch, PhysicsWorld *phys, Vector2 wo
     }
 }
 
+static void UpdateBoostPaintTool(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse,
+                                 bool lmbDown, bool lmbPressed, bool rmbDown, bool rmbPressed)
+{
+    // Start a paint (LMB) or unpaint (RMB) gesture
+    if (lmbPressed)
+    {
+        ClearPaintGesture(sketch);
+        sketch->paintingBoost = true;
+        sketch->paintBoostApply = true;
+    }
+    else if (rmbPressed)
+    {
+        ClearPaintGesture(sketch);
+        sketch->paintingBoost = true;
+        sketch->paintBoostApply = false;
+    }
+
+    bool buttonDown = sketch->paintBoostApply ? lmbDown : rmbDown;
+    if (!sketch->paintingBoost || !buttonDown)
+    {
+        if (sketch->paintingBoost && !buttonDown) ClearPaintGesture(sketch);
+        return;
+    }
+
+    uint8_t prevMask[MAX_STROKE_SEGS];
+    int slot = PhysicsPaintBoostAt(phys, worldMouse, sketch->paintBoostApply, prevMask);
+    if (slot < 0) return;
+
+    if (!sketch->paintUndoRecorded[slot])
+    {
+        PhysicsRecordPaintBoostUndo(phys, slot, prevMask);
+        sketch->paintUndoRecorded[slot] = true;
+    }
+}
+
 static void UpdateCannonTool(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, bool lmbDown, bool lmbPressed, bool inNoBuild)
 {
     if (lmbPressed)
@@ -279,18 +320,17 @@ static void UpdateCannonTool(SketchState *sketch, PhysicsWorld *phys, Vector2 wo
     }
 }
 
-// Erase whatever build sits under the cursor: crayon stroke, boost line or cannon
+// Erase stroke geometry (partial carve) or a cannon under the cursor
 static void EraseAt(PhysicsWorld *phys, Vector2 worldMouse)
 {
-    if (!PhysicsEraseAtPoint(phys, worldMouse))
-    {
-        if (!PhysicsEraseBoostLineAt(phys, worldMouse)) PhysicsEraseCannonAt(phys, worldMouse);
-    }
+    if (!PhysicsEraseAtPoint(phys, worldMouse)) PhysicsEraseCannonAt(phys, worldMouse);
 }
 
-void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, bool lmbDown, bool lmbPressed, bool rmbPressed, bool inNoBuild)
+void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse,
+                  bool lmbDown, bool lmbPressed, bool rmbDown, bool rmbPressed, bool inNoBuild)
 {
-    if (rmbPressed)
+    // Boost tool owns RMB for unpaint — don't spot-erase while painting boost
+    if (rmbPressed && (sketch->tool != TOOL_BOOST_LINE))
     {
         // RMB erases regardless of the selected tool (quick spot-erase)
         EraseAt(phys, worldMouse);
@@ -298,12 +338,21 @@ void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, b
         return;
     }
 
+    // Continuous RMB erase when not on the boost tool (hold to carve)
+    if (rmbDown && !rmbPressed && (sketch->tool != TOOL_BOOST_LINE) && (sketch->tool != TOOL_ERASER))
+    {
+        EraseAt(phys, worldMouse);
+    }
+
     switch (sketch->tool)
     {
         case TOOL_CRAYON:
-        case TOOL_BOOST_LINE:
         {
             UpdateStrokeTool(sketch, phys, worldMouse, lmbDown, lmbPressed, inNoBuild);
+        } break;
+        case TOOL_BOOST_LINE:
+        {
+            UpdateBoostPaintTool(sketch, phys, worldMouse, lmbDown, lmbPressed, rmbDown, rmbPressed);
         } break;
         case TOOL_CANNON:
         {
@@ -316,7 +365,7 @@ void SketchUpdate(SketchState *sketch, PhysicsWorld *phys, Vector2 worldMouse, b
         } break;
         case TOOL_ERASER:
         {
-            // Erase mode: hold LMB and sweep — anything under the cursor goes
+            // Erase mode: hold LMB and sweep — carves strokes / removes cannons
             if (lmbDown) EraseAt(phys, worldMouse);
         } break;
         default: break;

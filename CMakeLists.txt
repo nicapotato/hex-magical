@@ -7,13 +7,16 @@ include(FetchContent)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Dependencies
+# Pin 6.0: FIND_PACKAGE_ARGS forwards the version to find_package(), so a
+# system raylib 5.5 (e.g. stale Homebrew) is rejected and FetchContent
+# downloads 6.0 — matching CI. Without the version, any installed raylib wins.
 set(RAYLIB_VERSION 6.0)
 
 FetchContent_Declare(
     raylib
     DOWNLOAD_EXTRACT_TIMESTAMP OFF
     URL https://github.com/raysan5/raylib/archive/refs/tags/${RAYLIB_VERSION}.tar.gz
-    FIND_PACKAGE_ARGS
+    FIND_PACKAGE_ARGS ${RAYLIB_VERSION}
 )
 
 FetchContent_MakeAvailable(raylib)

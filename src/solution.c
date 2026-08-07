@@ -15,6 +15,58 @@
 // Same ink color as sketch.c — solutions don't store color (single crayon today)
 static const Color SOLUTION_CRAYON = { 40, 90, 200, 255 };
 
+static bool StrokeHasAnyBoost(const SolutionStroke *stroke)
+{
+    if (!stroke->hasBoostMask || (stroke->pointCount < 2)) return false;
+    for (int i = 0; i < stroke->pointCount - 1; i++)
+    {
+        if (stroke->boostSeg[i]) return true;
+    }
+    return false;
+}
+
+// Encode boost bits as lowercase hex (LSB of first byte = segment 0)
+static void FormatBoostMask(const uint8_t *boostSeg, int segCount, char *out, int outSize)
+{
+    int byteCount = (segCount + 7) / 8;
+    if (byteCount * 2 + 1 > outSize)
+    {
+        out[0] = '\0';
+        return;
+    }
+    for (int b = 0; b < byteCount; b++)
+    {
+        unsigned int byte = 0;
+        for (int bit = 0; bit < 8; bit++)
+        {
+            int seg = b * 8 + bit;
+            if ((seg < segCount) && boostSeg[seg]) byte |= (1u << bit);
+        }
+        snprintf(out + b * 2, 3, "%02x", byte);
+    }
+}
+
+static bool ParseBoostMask(const char *hex, uint8_t *boostSeg, int segCount)
+{
+    memset(boostSeg, 0, (size_t)segCount);
+    int hexLen = (int)strlen(hex);
+    if ((hexLen <= 0) || ((hexLen % 2) != 0)) return false;
+
+    int byteCount = hexLen / 2;
+    for (int b = 0; b < byteCount; b++)
+    {
+        unsigned int byte = 0;
+        if (sscanf(hex + b * 2, "%2x", &byte) != 1) return false;
+        for (int bit = 0; bit < 8; bit++)
+        {
+            int seg = b * 8 + bit;
+            if (seg >= segCount) break;
+            if (byte & (1u << bit)) boostSeg[seg] = 1;
+        }
+    }
+    return true;
+}
+
 //----------------------------------------------------------------------------------
 // Module Functions Definition
 //----------------------------------------------------------------------------------
@@ -38,18 +90,12 @@ void SolutionCapture(Solution *sol, const PhysicsWorld *phys, const char *levelF
             b2Vec2 world = b2TransformPoint(xf, (b2Vec2){ drawn->localPoints[p].x, drawn->localPoints[p].y });
             stroke->points[p] = (Vector2){ world.x, world.y };
         }
-    }
-
-    // Boost lines and cannons are part of the built track — snapshot them too
-    for (int i = 0; i < MAX_BOOST_LINES; i++)
-    {
-        const BoostLine *line = &phys->boostLines[i];
-        if (!line->active) continue;
-        if (sol->boostCount >= SOLUTION_MAX_BOOSTS) break;
-
-        SolutionStroke *boost = &sol->boosts[sol->boostCount++];
-        boost->pointCount = line->pointCount;
-        for (int p = 0; p < line->pointCount; p++) boost->points[p] = line->points[p];
+        memcpy(stroke->boostSeg, drawn->boostSeg, sizeof(stroke->boostSeg));
+        stroke->hasBoostMask = false;
+        for (int s = 0; s < drawn->pointCount - 1; s++)
+        {
+            if (drawn->boostSeg[s]) { stroke->hasBoostMask = true; break; }
+        }
     }
 
     for (int i = 0; i < MAX_CANNONS; i++)
@@ -85,16 +131,11 @@ bool SolutionSave(const Solution *sol, const char *path)
         {
             fprintf(f, " %.4f,%.4f", stroke->points[p].x, stroke->points[p].y);
         }
-        fprintf(f, "\n");
-    }
-
-    for (int i = 0; i < sol->boostCount; i++)
-    {
-        const SolutionStroke *boost = &sol->boosts[i];
-        fprintf(f, "boost");
-        for (int p = 0; p < boost->pointCount; p++)
+        if (StrokeHasAnyBoost(stroke))
         {
-            fprintf(f, " %.4f,%.4f", boost->points[p].x, boost->points[p].y);
+            char maskHex[MAX_STROKE_SEGS / 4 + 8];
+            FormatBoostMask(stroke->boostSeg, stroke->pointCount - 1, maskHex, (int)sizeof(maskHex));
+            fprintf(f, " mask %s", maskHex);
         }
         fprintf(f, "\n");
     }
@@ -109,16 +150,37 @@ bool SolutionSave(const Solution *sol, const char *path)
     return true;
 }
 
-// Parse one "stroke x,y x,y ..." line. Returns false on any malformed pair.
+// Parse "stroke x,y x,y ... [mask HEX]". Returns false on any malformed pair.
 static bool ParseStrokeLine(const char *line, SolutionStroke *stroke)
 {
-    stroke->pointCount = 0;
+    memset(stroke, 0, sizeof(*stroke));
     const char *cursor = line;
 
     while (*cursor)
     {
         while ((*cursor == ' ') || (*cursor == '\t')) cursor++;
         if ((*cursor == '\0') || (*cursor == '\n') || (*cursor == '\r')) break;
+
+        // Optional trailing mask token
+        if (strncmp(cursor, "mask", 4) == 0)
+        {
+            cursor += 4;
+            while ((*cursor == ' ') || (*cursor == '\t')) cursor++;
+            char hex[MAX_STROKE_SEGS / 4 + 8];
+            int n = 0;
+            while (cursor[n] && (cursor[n] != ' ') && (cursor[n] != '\t')
+                   && (cursor[n] != '\n') && (cursor[n] != '\r')
+                   && (n < (int)sizeof(hex) - 1))
+            {
+                hex[n] = cursor[n];
+                n++;
+            }
+            hex[n] = '\0';
+            if (stroke->pointCount < 2) return false;
+            if (!ParseBoostMask(hex, stroke->boostSeg, stroke->pointCount - 1)) return false;
+            stroke->hasBoostMask = true;
+            break;
+        }
 
         char *end = NULL;
         float x = strtof(cursor, &end);
@@ -214,20 +276,11 @@ bool SolutionLoad(Solution *sol, const char *path)
         }
         else if (strncmp(start, "boost", 5) == 0)
         {
-            if (sol->boostCount >= SOLUTION_MAX_BOOSTS)
-            {
-                fprintf(stderr, "SOLUTION: %s:%d too many boost lines (max %d)\n",
-                        path, lineNo, SOLUTION_MAX_BOOSTS);
-                fclose(f);
-                return false;
-            }
-            if (!ParseStrokeLine(start + 5, &sol->boosts[sol->boostCount]))
-            {
-                fprintf(stderr, "SOLUTION: %s:%d malformed boost line\n", path, lineNo);
-                fclose(f);
-                return false;
-            }
-            sol->boostCount++;
+            // Standalone boost lines were removed in version 4
+            fprintf(stderr, "SOLUTION: %s:%d 'boost' lines are no longer supported (use stroke ... mask)\n",
+                    path, lineNo);
+            fclose(f);
+            return false;
         }
         else if (strncmp(start, "cannon ", 7) == 0)
         {
@@ -271,19 +324,12 @@ void SolutionApply(const Solution *sol, PhysicsWorld *phys)
     for (int i = 0; i < sol->strokeCount; i++)
     {
         const SolutionStroke *stroke = &sol->strokes[i];
-        int slot = PhysicsCreateDrawnBody(phys, stroke->points, stroke->pointCount, SOLUTION_CRAYON);
+        const uint8_t *mask = stroke->hasBoostMask ? stroke->boostSeg : NULL;
+        int slot = PhysicsCreateDrawnBody(phys, stroke->points, stroke->pointCount,
+                                          SOLUTION_CRAYON, mask);
         if (slot < 0)
         {
             fprintf(stderr, "SOLUTION: failed to recreate stroke %d/%d\n", i + 1, sol->strokeCount);
-        }
-    }
-
-    for (int i = 0; i < sol->boostCount; i++)
-    {
-        const SolutionStroke *boost = &sol->boosts[i];
-        if (PhysicsCreateBoostLine(phys, boost->points, boost->pointCount) < 0)
-        {
-            fprintf(stderr, "SOLUTION: failed to recreate boost line %d/%d\n", i + 1, sol->boostCount);
         }
     }
 

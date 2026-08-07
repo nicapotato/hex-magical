@@ -11,14 +11,28 @@
 #include "tiled.h"
 #include "game.h"
 
+#include <assert.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+// Filled by RenderCelestialCycle for the lighting pass in game.c.
+static CelestialFrame gCelestialFrame = { 0 };
+
 #define WALL_THICKNESS 24.0f
-#define TILED_MAX_TILE_TYPES 512
+#define TILED_MAX_TILE_TYPES 2048 // atlas tile ids (nature-sprites-2-medium is 1408)
 #define TILED_MAX_SHAPES_PER_TILE 4
+#define CELESTIAL_PERIOD_SEC 48.0f // full day+night loop along sun-track
+#define CELESTIAL_SUN_TIME_FRAC (3.0f / 4.0f) // sun arc lasts 3× the moon arc
+#define CELESTIAL_CLOUD_COUNT 7   // concurrent drifting clouds on sun-track maps
+
+// Tiled global-tile-id flip flags (top 4 bits). See docs.mapeditor.org global-tile-ids.
+#define TILED_FLIPPED_HORIZONTALLY 0x80000000u
+#define TILED_FLIPPED_VERTICALLY   0x40000000u
+#define TILED_FLIPPED_DIAGONALLY   0x20000000u
+#define TILED_FLIPPED_HEX_120      0x10000000u
+#define TILED_GID_MASK             0x0FFFFFFFu
 
 typedef struct TileCollisionShape
 {
@@ -96,10 +110,12 @@ static int ParseCsv(const char *dataStart, int *out, int maxCount)
     int count = 0;
     while ((p < end) && (count < maxCount))
     {
+        // GIDs are unsigned 32-bit (flip flags in the high bits). Accept digits only;
+        // Tiled CSV writes the full unsigned value, never a leading '-'.
         while ((p < end) && ((*p < '0') || (*p > '9'))) p++;
         if (p >= end) break;
         char *next = NULL;
-        out[count++] = (int)strtol(p, &next, 10);
+        out[count++] = (int)strtoul(p, &next, 10);
         p = next;
     }
     return count;
@@ -512,8 +528,77 @@ static bool IsFullTileCollision(const TileCollision *collision, float tileWidth,
 }
 
 //----------------------------------------------------------------------------------
-// Collision: greedy-merge solid tiles into rectangles
+// GID helpers (flip flags live in the high bits of the 32-bit global tile id)
 //----------------------------------------------------------------------------------
+typedef struct TiledGidFlags
+{
+    bool flipH;
+    bool flipV;
+    bool flipD;
+} TiledGidFlags;
+
+static TiledGidFlags DecodeGidFlags(int gid)
+{
+    unsigned int raw = (unsigned int)gid;
+    return (TiledGidFlags){
+        .flipH = (raw & TILED_FLIPPED_HORIZONTALLY) != 0,
+        .flipV = (raw & TILED_FLIPPED_VERTICALLY) != 0,
+        .flipD = (raw & TILED_FLIPPED_DIAGONALLY) != 0
+    };
+}
+
+// Apply Tiled orthogonal flips in documented order: diagonal (axis swap), then H, then V.
+static Vector2 TransformTileLocalPoint(Vector2 p, float tileW, float tileH, TiledGidFlags flags)
+{
+    float x = p.x;
+    float y = p.y;
+    if (flags.flipD)
+    {
+        float tmp = x;
+        x = y;
+        y = tmp;
+    }
+    if (flags.flipH) x = tileW - x;
+    if (flags.flipV) y = tileH - y;
+    return (Vector2){ x, y };
+}
+
+// Odd number of reflections reverses winding — Box2D wants a consistent order.
+static bool GidFlagsReverseWinding(TiledGidFlags flags)
+{
+    int reflections = (flags.flipD ? 1 : 0) + (flags.flipH ? 1 : 0) + (flags.flipV ? 1 : 0);
+    return (reflections % 2) != 0;
+}
+
+// Draw a terrain tile with Tiled H/V/D flags. Diagonal is remapped the same way
+// Tiled's CellRenderer does: 90° rotation, then H' = V, V' = !H.
+static void DrawTiledTile(Texture2D tex, Rectangle src, Rectangle dest, TiledGidFlags flags)
+{
+    float rotation = 0.0f;
+    bool flipH = flags.flipH;
+    bool flipV = flags.flipV;
+
+    if (flags.flipD)
+    {
+        rotation = 90.0f;
+        bool oldH = flipH;
+        flipH = flipV;
+        flipV = !oldH;
+    }
+
+    if (flipH) src.width = -src.width;
+    if (flipV) src.height = -src.height;
+
+    Vector2 origin = { dest.width * 0.5f, dest.height * 0.5f };
+    Rectangle centered = {
+        dest.x + dest.width * 0.5f,
+        dest.y + dest.height * 0.5f,
+        dest.width,
+        dest.height
+    };
+    DrawTexturePro(tex, src, centered, origin, rotation, WHITE);
+}
+
 static bool ResolveGid(const TiledTileset *tilesets, int tilesetCount, int gid,
                        int *outTsIndex, int *outLocalId);
 
@@ -589,6 +674,9 @@ static int BuildCustomTilePolygons(const int *gids, int w, int h,
             const TileCollision *collision = &collisions[tsIndex][tileId];
             if (IsFullTileCollision(collision, tileW, tileH)) continue;
 
+            TiledGidFlags flags = DecodeGidFlags(gid);
+            bool reverseWinding = GidFlagsReverseWinding(flags);
+
             for (int s = 0; s < collision->shapeCount; s++)
             {
                 if (polygonCount >= maxPolygons)
@@ -602,9 +690,12 @@ static int BuildCustomTilePolygons(const int *gids, int w, int h,
                 dest->pointCount = source->pointCount;
                 for (int p = 0; p < source->pointCount; p++)
                 {
+                    int srcIndex = reverseWinding ? (source->pointCount - 1 - p) : p;
+                    Vector2 local = TransformTileLocalPoint(source->points[srcIndex],
+                                                            tileW, tileH, flags);
                     dest->points[p] = (Vector2){
-                        offset.x + ((float)x * tileW + source->points[p].x) * scale,
-                        offset.y + ((float)y * tileH + source->points[p].y) * scale
+                        offset.x + ((float)x * tileW + local.x) * scale,
+                        offset.y + ((float)y * tileH + local.y) * scale
                     };
                 }
             }
@@ -616,15 +707,17 @@ static int BuildCustomTilePolygons(const int *gids, int w, int h,
 //----------------------------------------------------------------------------------
 // Tileset refs + tile animations
 //----------------------------------------------------------------------------------
-// Strip Tiled flip flags (top 3 bits) before resolving against firstgid ranges.
+// Strip Tiled flip flags before resolving against firstgid ranges.
+// GIDs with the horizontal flip bit set are negative when stored in a signed int —
+// never reject those with `gid <= 0`; only the tile-id nibble being zero means empty.
 static bool ResolveGid(const TiledTileset *tilesets, int tilesetCount, int gid,
                        int *outTsIndex, int *outLocalId)
 {
-    if (gid <= 0) return false;
-    unsigned int raw = (unsigned int)gid & 0x1FFFFFFFu;
+    unsigned int tileId = (unsigned int)gid & TILED_GID_MASK;
+    if (tileId == 0) return false;
     for (int i = 0; i < tilesetCount; i++)
     {
-        int localId = (int)raw - tilesets[i].firstGid;
+        int localId = (int)tileId - tilesets[i].firstGid;
         if ((localId >= 0) && (localId < tilesets[i].tileCount))
         {
             *outTsIndex = i;
@@ -671,7 +764,9 @@ static bool IsGameplayObjectName(const char *name)
         || (strcmp(name, "no-build") == 0)
         || (strcmp(name, "pit") == 0)
         || (strcmp(name, "boost") == 0)
-        || (strcmp(name, "anti-gravity") == 0);
+        || (strcmp(name, "anti-gravity") == 0)
+        || (strcmp(name, "sun-track") == 0)
+        || (strcmp(name, "clouds") == 0);
 }
 
 static bool ParseQuotedAttr(const char *tag, const char *attr, char *out, size_t outSize)
@@ -860,8 +955,14 @@ static bool LoadMapTilesets(const char *xml, const char *mapDir, TiledLevel *lvl
             && ParseIntAttr(tilesetTag, " columns=\"", &ts->columns)
             && ParseIntAttr(tilesetTag, " tilecount=\"", &ts->tileCount)
             && (ts->columns >= 0)
-            && (ts->tileCount > 0)
-            && (ts->tileCount <= TILED_MAX_TILE_TYPES);
+            && (ts->tileCount > 0);
+
+        if (ok && (ts->tileCount > TILED_MAX_TILE_TYPES))
+        {
+            TraceLog(LOG_ERROR, "TILED: tileset %s has %d tiles (max %d)",
+                     ts->tsxPath, ts->tileCount, TILED_MAX_TILE_TYPES);
+            ok = false;
+        }
 
         ts->imageCollection = (ts->columns == 0);
         if (ok && ts->imageCollection && (ts->tileCount > TILED_MAX_TILE_IMAGES))
@@ -1017,7 +1118,83 @@ static void UnloadLevelDecors(TiledLevel *lvl)
     lvl->decorCount = 0;
 }
 
-static bool PushDecor(TiledLevel *lvl, Texture2D texture, bool ownsTexture,
+static void UnloadCelestial(TiledLevel *lvl)
+{
+    if (lvl->sunTex.id != 0) UnloadTexture(lvl->sunTex);
+    if (lvl->moonTex.id != 0) UnloadTexture(lvl->moonTex);
+    lvl->sunTex = (Texture2D){ 0 };
+    lvl->moonTex = (Texture2D){ 0 };
+    for (int i = 0; i < TILED_CLOUD_TEX_COUNT; i++)
+    {
+        if (lvl->cloudTex[i].id != 0) UnloadTexture(lvl->cloudTex[i]);
+        lvl->cloudTex[i] = (Texture2D){ 0 };
+    }
+    lvl->hasSunTrack = false;
+    lvl->sunTrack = (PolyZone){ 0 };
+    lvl->hasCloudBand = false;
+    lvl->cloudBand = (PolyZone){ 0 };
+}
+
+// Optional visual tile layers: any "terrain-*" (not the collision "terrain") or "sprites".
+static bool LoadVisualTileLayers(const char *xml, TiledLevel *tmp, int tileCount)
+{
+    tmp->visLayerCount = 0;
+    const char *p = xml;
+    while ((p = strstr(p, "<layer")) != NULL)
+    {
+        const char *tagEnd = strchr(p, '>');
+        if (tagEnd == NULL) break;
+
+        char name[32] = { 0 };
+        if (!ParseQuotedAttr(p, "name=\"", name, sizeof(name)))
+        {
+            p = tagEnd + 1;
+            continue;
+        }
+
+        bool isTerrainFamily = (strncmp(name, "terrain", 7) == 0);
+        bool isSprites = (strcmp(name, "sprites") == 0);
+        if ((!isTerrainFamily && !isSprites) || (strcmp(name, "terrain") == 0))
+        {
+            p = tagEnd + 1;
+            continue;
+        }
+
+        if (tmp->visLayerCount >= TILED_MAX_VIS_LAYERS)
+        {
+            TraceLog(LOG_ERROR, "TILED: more than %d visual tile layers", TILED_MAX_VIS_LAYERS);
+            return false;
+        }
+
+        int slot = tmp->visLayerCount;
+        if (!ParseTileLayer(xml, name, tmp->visGids[slot], tileCount)) return false;
+        snprintf(tmp->visLayerNames[slot], sizeof(tmp->visLayerNames[slot]), "%s", name);
+        tmp->visLayerCount++;
+        p = tagEnd + 1;
+    }
+    return true;
+}
+
+// resources/<act>/map.tmx → resources/spritesheet/isolated/<name>.png
+static bool LoadCelestialTexture(const char *mapDir, const char *name, Texture2D *out)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/../spritesheet/isolated/%s.png", mapDir, name);
+    if (!IsWindowReady())
+    {
+        *out = (Texture2D){ 0 };
+        return true; // parse-only / headless — textures load once the window exists
+    }
+    *out = LoadTexture(path);
+    if (out->id == 0)
+    {
+        TraceLog(LOG_ERROR, "TILED: sun-track present but failed to load %s", path);
+        return false;
+    }
+    return true;
+}
+
+static bool PushDecor(TiledLevel *lvl, Texture2D texture, bool ownsTexture, bool aboveTerrain,
                       Rectangle src, Rectangle dest, float parallaxX, float parallaxY,
                       float opacity)
 {
@@ -1032,6 +1209,7 @@ static bool PushDecor(TiledLevel *lvl, Texture2D texture, bool ownsTexture,
     lvl->decors[lvl->decorCount++] = (TiledDecor){
         .texture = texture,
         .ownsTexture = ownsTexture,
+        .aboveTerrain = aboveTerrain,
         .src = src,
         .dest = dest,
         .parallaxX = parallaxX,
@@ -1041,7 +1219,24 @@ static bool PushDecor(TiledLevel *lvl, Texture2D texture, bool ownsTexture,
     return true;
 }
 
-// Tile objects (gid=) and imagelayers become decorative backgrounds.
+static void DrawDecorsPass(const TiledLevel *lvl, Vector2 viewPan, bool aboveTerrain)
+{
+    for (int i = 0; i < lvl->decorCount; i++)
+    {
+        const TiledDecor *d = &lvl->decors[i];
+        if (d->aboveTerrain != aboveTerrain) continue;
+        if (d->texture.id == 0) continue;
+        Rectangle dest = d->dest;
+        dest.x += viewPan.x * (1.0f - d->parallaxX);
+        dest.y += viewPan.y * (1.0f - d->parallaxY);
+        Color tint = WHITE;
+        tint.a = (unsigned char)(d->opacity * 255.0f + 0.5f);
+        DrawTexturePro(d->texture, d->src, dest, (Vector2){ 0, 0 }, 0.0f, tint);
+    }
+}
+
+// Tile objects (gid=) and imagelayers become decorative images.
+// Object layer "art" draws above terrain; everything else draws behind.
 // Layer parallaxx/parallaxy from Tiled are preserved (default 1,1).
 static bool ParseBackgroundDecors(const char *xml, const char *mapDir, TiledLevel *lvl)
 {
@@ -1055,11 +1250,14 @@ static bool ParseBackgroundDecors(const char *xml, const char *mapDir, TiledLeve
             float parallaxX = 1.0f, parallaxY = 1.0f;
             float layerOffX = 0.0f, layerOffY = 0.0f;
             float layerOpacity = 1.0f;
+            char layerName[64] = { 0 };
             ParseFloatAttr(p, " parallaxx=\"", &parallaxX);
             ParseFloatAttr(p, " parallaxy=\"", &parallaxY);
             ParseFloatAttr(p, " offsetx=\"", &layerOffX);
             ParseFloatAttr(p, " offsety=\"", &layerOffY);
             ParseFloatAttr(p, " opacity=\"", &layerOpacity);
+            ParseQuotedAttr(p, "name=\"", layerName, sizeof(layerName));
+            bool aboveTerrain = (strcmp(layerName, "art") == 0);
 
             const char *groupEnd = strstr(p, "</objectgroup>");
             if (groupEnd == NULL)
@@ -1079,8 +1277,10 @@ static bool ParseBackgroundDecors(const char *xml, const char *mapDir, TiledLeve
                 }
 
                 // Only tile objects (gid) are decorative images.
+                // Flip-flagged GIDs are negative as signed ints — empty is tile-id 0.
                 int gid = 0;
-                if (!ParseIntAttr(obj, " gid=\"", &gid) || (gid <= 0))
+                if (!ParseIntAttr(obj, " gid=\"", &gid)
+                    || (((unsigned int)gid & TILED_GID_MASK) == 0))
                 {
                     obj = objEnd;
                     continue;
@@ -1128,7 +1328,7 @@ static bool ParseBackgroundDecors(const char *xml, const char *mapDir, TiledLeve
                     ow * lvl->scale,
                     oh * lvl->scale
                 };
-                if (!PushDecor(lvl, tex, false, src, dest, parallaxX, parallaxY,
+                if (!PushDecor(lvl, tex, false, aboveTerrain, src, dest, parallaxX, parallaxY,
                                layerOpacity * objOpacity)) return false;
                 obj = objEnd;
             }
@@ -1205,7 +1405,7 @@ static bool ParseBackgroundDecors(const char *xml, const char *mapDir, TiledLeve
                 (float)imgW * lvl->scale,
                 (float)imgH * lvl->scale
             };
-            if (!PushDecor(lvl, tex, true, src, dest, parallaxX, parallaxY, layerOpacity)) return false;
+            if (!PushDecor(lvl, tex, true, false, src, dest, parallaxX, parallaxY, layerOpacity)) return false;
 
             p = layerEnd + strlen("</imagelayer>");
             continue;
@@ -1250,6 +1450,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
 
     int tileCount = ok ? tmp.mapWidth * tmp.mapHeight : 0;
     ok = ok && ParseTileLayer(xml, "terrain", tmp.terrainGids, tileCount);
+    ok = ok && LoadVisualTileLayers(xml, &tmp, tileCount);
 
     // Level parameters (required). Authored in tile-widths of ink; converted to
     // canvas pixels below once the letterbox scale is known.
@@ -1286,6 +1487,38 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
         tmp.antiGravityCount = ParseGravityZones(xml, tmp.antiGravity, TILED_MAX_ZONES);
         if ((tmp.noBuildCount < 0) || (tmp.pitCount < 0) || (tmp.boostCount < 0)
             || (tmp.antiGravityCount < 0)) ok = false;
+
+        // Optional sun-track: at most one closed sky path for the day/night pilot.
+        if (ok)
+        {
+            PolyZone sunTracks[1] = { 0 };
+            int sunTrackCount = ParseZones(xml, "sun-track", sunTracks, 1);
+            if (sunTrackCount < 0)
+            {
+                ok = false;
+            }
+            else if (sunTrackCount == 1)
+            {
+                tmp.hasSunTrack = true;
+                tmp.sunTrack = sunTracks[0];
+            }
+        }
+
+        // Optional cloud spawn band (rect/polygon named "clouds").
+        if (ok)
+        {
+            PolyZone cloudBands[1] = { 0 };
+            int cloudBandCount = ParseZones(xml, "clouds", cloudBands, 1);
+            if (cloudBandCount < 0)
+            {
+                ok = false;
+            }
+            else if (cloudBandCount == 1)
+            {
+                tmp.hasCloudBand = true;
+                tmp.cloudBand = cloudBands[0];
+            }
+        }
     }
 
     // External tilesets listed on the map (supports multi-tileset maps like map-11).
@@ -1312,6 +1545,13 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
         tmp.lineCapacity = lineCapacityTiles * (float)tmp.tileWidth * tmp.scale;
         tmp.boostLineCapacity = boostLineCapacityTiles * (float)tmp.tileWidth * tmp.scale;
         ok = ParseBackgroundDecors(xml, mapDir, &tmp);
+        if (ok && tmp.hasSunTrack)
+        {
+            ok = LoadCelestialTexture(mapDir, "sun", &tmp.sunTex)
+              && LoadCelestialTexture(mapDir, "moon", &tmp.moonTex)
+              && LoadCelestialTexture(mapDir, "cloud-1", &tmp.cloudTex[0])
+              && LoadCelestialTexture(mapDir, "cloud-2", &tmp.cloudTex[1]);
+        }
     }
 
     UnloadFileText(xml);
@@ -1319,6 +1559,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     {
         // LoadMapTilesets / ParseBackgroundDecors may have loaded textures before failing.
         tmp.loaded = true; // so UnloadLevelTilesets walks the partial list
+        UnloadCelestial(&tmp);
         UnloadLevelDecors(&tmp);
         UnloadLevelTilesets(&tmp);
         return false;
@@ -1346,6 +1587,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     if ((tmp.boxCount < 0) || (tmp.polygonCount < 0))
     {
         tmp.loaded = true;
+        UnloadCelestial(&tmp);
         UnloadLevelDecors(&tmp);
         UnloadLevelTilesets(&tmp);
         return false;
@@ -1354,6 +1596,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     {
         TraceLog(LOG_ERROR, "TILED: terrain layer has no tiles with TSX collision objects");
         tmp.loaded = true;
+        UnloadCelestial(&tmp);
         UnloadLevelDecors(&tmp);
         UnloadLevelTilesets(&tmp);
         return false;
@@ -1377,8 +1620,11 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     MapZonesToCanvas(tmp.pits, tmp.pitCount, tmp.scale, tmp.offset);
     MapZonesToCanvas(tmp.boosts, tmp.boostCount, tmp.scale, tmp.offset);
     MapGravityZonesToCanvas(tmp.antiGravity, tmp.antiGravityCount, tmp.scale, tmp.offset);
+    if (tmp.hasSunTrack) MapZonesToCanvas(&tmp.sunTrack, 1, tmp.scale, tmp.offset);
+    if (tmp.hasCloudBand) MapZonesToCanvas(&tmp.cloudBand, 1, tmp.scale, tmp.offset);
 
     // Commit: replace previous state (textures already live in tmp)
+    UnloadCelestial(lvl);
     UnloadLevelDecors(lvl);
     UnloadLevelTilesets(lvl);
     *lvl = tmp;
@@ -1408,15 +1654,17 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
 
     int animTiles = 0;
     for (int i = 0; i < lvl->tilesetCount; i++) animTiles += lvl->tilesets[i].animCount;
-    TraceLog(LOG_INFO, "TILED: loaded %s (%dx%d tiles, %d tilesets, %d animated, %d boxes, %d polygons, %d no-build, %d pits, %d boosts, %d anti-gravity, ink %.0f/%.0f px, %d cannons)",
+    TraceLog(LOG_INFO, "TILED: loaded %s (%dx%d tiles, %d tilesets, %d animated, %d boxes, %d polygons, %d vis-layers, %d no-build, %d pits, %d boosts, %d anti-gravity, sun-track %s, ink %.0f/%.0f px, %d cannons)",
              tmxPath, lvl->mapWidth, lvl->mapHeight, lvl->tilesetCount, animTiles, lvl->boxCount,
-             lvl->polygonCount, lvl->noBuildCount, lvl->pitCount, lvl->boostCount, lvl->antiGravityCount,
+             lvl->polygonCount, lvl->visLayerCount, lvl->noBuildCount, lvl->pitCount, lvl->boostCount,
+             lvl->antiGravityCount, lvl->hasSunTrack ? "yes" : "no",
              lvl->lineCapacity, lvl->boostLineCapacity, lvl->cannonCount);
     return true;
 }
 
 void TiledLevelUnload(TiledLevel *lvl)
 {
+    UnloadCelestial(lvl);
     UnloadLevelDecors(lvl);
     UnloadLevelTilesets(lvl);
     lvl->loaded = false;
@@ -1561,6 +1809,217 @@ static void DrawAntiGravityZones(const GravityZone *zones, int count)
     }
 }
 
+// Sample a closed polyline by normalized arc-length parameter u in [0, 1).
+static Vector2 PolyZoneSampleLoop(const PolyZone *zone, float u)
+{
+    assert(zone != NULL);
+    assert(zone->pointCount >= 2);
+
+    u -= floorf(u); // wrap to [0, 1)
+
+    float total = 0.0f;
+    float segLen[POLY_ZONE_MAX_POINTS];
+    for (int i = 0; i < zone->pointCount; i++)
+    {
+        Vector2 a = zone->points[i];
+        Vector2 b = zone->points[(i + 1) % zone->pointCount];
+        float dx = b.x - a.x;
+        float dy = b.y - a.y;
+        segLen[i] = sqrtf(dx * dx + dy * dy);
+        total += segLen[i];
+    }
+    assert(total > 0.0f);
+
+    float target = u * total;
+    for (int i = 0; i < zone->pointCount; i++)
+    {
+        bool last = (i == zone->pointCount - 1);
+        if ((target <= segLen[i]) || last)
+        {
+            float t = (segLen[i] > 0.0f) ? (target / segLen[i]) : 0.0f;
+            if (t > 1.0f) t = 1.0f;
+            Vector2 a = zone->points[i];
+            Vector2 b = zone->points[(i + 1) % zone->pointCount];
+            return (Vector2){ a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t };
+        }
+        target -= segLen[i];
+    }
+
+    return zone->points[0];
+}
+
+static void DrawCelestialBody(Texture2D tex, Vector2 center, float alpha)
+{
+    if ((tex.id == 0) || (alpha <= 0.01f)) return;
+    if (alpha > 1.0f) alpha = 1.0f;
+
+    Rectangle src = { 0.0f, 0.0f, (float)tex.width, (float)tex.height };
+    Rectangle dest = {
+        center.x - (float)tex.width * 0.5f,
+        center.y - (float)tex.height * 0.5f,
+        (float)tex.width,
+        (float)tex.height
+    };
+    Color tint = { 255, 255, 255, (unsigned char)(alpha * 255.0f) };
+    DrawTexturePro(tex, src, dest, (Vector2){ 0.0f, 0.0f }, 0.0f, tint);
+}
+
+static void CloudBandBounds(const TiledLevel *lvl, float *outLeft, float *outTop,
+                            float *outW, float *outH)
+{
+    const PolyZone *band = NULL;
+    if (lvl->hasCloudBand && (lvl->cloudBand.pointCount >= 3))
+    {
+        band = &lvl->cloudBand;
+    }
+    else
+    {
+        band = &lvl->sunTrack;
+    }
+
+    float left = band->points[0].x;
+    float right = band->points[0].x;
+    float top = band->points[0].y;
+    float bot = band->points[0].y;
+    for (int i = 1; i < band->pointCount; i++)
+    {
+        float x = band->points[i].x;
+        float y = band->points[i].y;
+        if (x < left) left = x;
+        if (x > right) right = x;
+        if (y < top) top = y;
+        if (y > bot) bot = y;
+    }
+    *outLeft = left;
+    *outTop = top;
+    *outW = right - left;
+    *outH = bot - top;
+}
+
+// Horizontal drifting clouds. tintOverride.a > 0 forces a solid tint (cloud mask).
+static void RenderClouds(const TiledLevel *lvl, float night, Color tintOverride)
+{
+    assert(lvl->hasSunTrack);
+
+    float bandLeft = 0.0f, bandTop = 0.0f, bandW = 0.0f, bandH = 0.0f;
+    CloudBandBounds(lvl, &bandLeft, &bandTop, &bandW, &bandH);
+    if ((bandW < 1.0f) || (bandH < 1.0f)) return;
+
+    float alpha = 0.92f - night * 0.35f;
+    double now = GetTime();
+    bool maskPass = (tintOverride.a > 0);
+
+    for (int i = 0; i < CELESTIAL_CLOUD_COUNT; i++)
+    {
+        const Texture2D *tex = &lvl->cloudTex[i % TILED_CLOUD_TEX_COUNT];
+        if (tex->id == 0) continue;
+
+        float speed = 14.0f + (float)((i * 11) % 18);
+        float yFrac = (float)((i * 37 + 13) % 100) / 100.0f;
+        float scale = 0.85f + (float)((i * 19) % 40) / 100.0f;
+        float phase = (float)(i * 173);
+
+        float w = (float)tex->width * scale;
+        float h = (float)tex->height * scale;
+        float travel = bandW + w * 2.0f;
+        float x = bandLeft - w + (float)fmod(now * (double)speed + (double)phase, (double)travel);
+        float y = bandTop + bandH * (0.12f + yFrac * 0.76f);
+
+        Rectangle src = { 0.0f, 0.0f, (float)tex->width, (float)tex->height };
+        Rectangle dest = { x, y - h * 0.5f, w, h };
+        Color tint = maskPass ? tintOverride
+                              : (Color){ 255, 255, 255, (unsigned char)(alpha * 255.0f) };
+        DrawTexturePro(*tex, src, dest, (Vector2){ 0.0f, 0.0f }, 0.0f, tint);
+    }
+}
+
+static void RenderCelestialCycle(const TiledLevel *lvl)
+{
+    gCelestialFrame = (CelestialFrame){ 0 };
+    if (!lvl->hasSunTrack || (lvl->sunTrack.pointCount < 3)) return;
+
+    // Time phase 0..1 over the full day+night. Path halves stay equal
+    // (day arc = first half of the polygon, night = second), but the sun
+    // spends CELESTIAL_SUN_TIME_FRAC of the period on its arc (3× the moon).
+    float t = (float)fmod(GetTime() / (double)CELESTIAL_PERIOD_SEC, 1.0);
+    if (t < 0.0f) t += 1.0f;
+
+    float pathU = 0.0f;
+    float sunAlpha = 0.0f;
+    float moonAlpha = 0.0f;
+    if (t < CELESTIAL_SUN_TIME_FRAC)
+    {
+        float local = t / CELESTIAL_SUN_TIME_FRAC; // 0..1 along day arc
+        pathU = local * 0.5f;
+        sunAlpha = sinf(local * (float)PI); // fade at both horizons
+    }
+    else
+    {
+        float local = (t - CELESTIAL_SUN_TIME_FRAC) / (1.0f - CELESTIAL_SUN_TIME_FRAC);
+        pathU = 0.5f + local * 0.5f;
+        moonAlpha = sinf(local * (float)PI);
+    }
+
+    Vector2 pos = PolyZoneSampleLoop(&lvl->sunTrack, pathU);
+    float night = 1.0f - sunAlpha;
+
+    gCelestialFrame = (CelestialFrame){
+        .active = true,
+        .bodyWorld = pos,
+        .sunIntensity = sunAlpha,
+        .night = night,
+    };
+
+    // Soft night wash when the sun is down — keeps gameplay readable.
+    if (night > 0.02f)
+    {
+        float mapPxW = (float)(lvl->mapWidth * lvl->tileWidth) * lvl->scale;
+        float mapPxH = (float)(lvl->mapHeight * lvl->tileHeight) * lvl->scale;
+        Color wash = { 18, 28, 64, (unsigned char)(night * 55.0f) };
+        DrawRectangle((int)lvl->offset.x, (int)lvl->offset.y,
+                      (int)mapPxW, (int)mapPxH, wash);
+    }
+
+    DrawCelestialBody(lvl->sunTex, pos, sunAlpha);
+    DrawCelestialBody(lvl->moonTex, pos, moonAlpha);
+    // Visible clouds (mask pass is done separately in game.c — nested RTs would
+    // unbind the main view target).
+    RenderClouds(lvl, night, (Color){ 0, 0, 0, 0 });
+}
+
+void TiledLevelRenderCloudMask(const TiledLevel *lvl)
+{
+    if (!lvl->loaded || !lvl->hasSunTrack) return;
+    RenderClouds(lvl, gCelestialFrame.night, (Color){ 255, 255, 255, 255 });
+}
+
+static void DrawTileGidLayer(const TiledLevel *lvl, const int *gids, float tw, float th, double now)
+{
+    for (int y = 0; y < lvl->mapHeight; y++)
+    {
+        for (int x = 0; x < lvl->mapWidth; x++)
+        {
+            int gid = gids[y * lvl->mapWidth + x];
+            int tsIndex = -1;
+            int localId = -1;
+            if (!ResolveGid(lvl->tilesets, lvl->tilesetCount, gid, &tsIndex, &localId)) continue;
+
+            const TiledTileset *ts = &lvl->tilesets[tsIndex];
+            int drawId = ResolveAnimatedLocalId(ts, localId, now);
+            Texture2D tex = { 0 };
+            Rectangle src = { 0 };
+            if (!TilesetTileSource(ts, drawId, (int)tw, (int)th, &tex, &src)) continue;
+
+            Rectangle dest = {
+                lvl->offset.x + (float)x * tw * lvl->scale,
+                lvl->offset.y + (float)y * th * lvl->scale,
+                tw * lvl->scale, th * lvl->scale
+            };
+            DrawTiledTile(tex, src, dest, DecodeGidFlags(gid));
+        }
+    }
+}
+
 void RenderTiledLevel(const TiledLevel *lvl, Vector2 viewPan)
 {
     if (!lvl->loaded) return;
@@ -1568,19 +2027,13 @@ void RenderTiledLevel(const TiledLevel *lvl, Vector2 viewPan)
     float tw = (float)lvl->tileWidth;
     float th = (float)lvl->tileHeight;
 
-    // Backgrounds first. Parallax: Mode2D already subtracts viewPan, so we add
-    // pan * (1 - factor) here — net motion is pan * factor (0 = screen-locked).
-    for (int i = 0; i < lvl->decorCount; i++)
-    {
-        const TiledDecor *d = &lvl->decors[i];
-        if (d->texture.id == 0) continue;
-        Rectangle dest = d->dest;
-        dest.x += viewPan.x * (1.0f - d->parallaxX);
-        dest.y += viewPan.y * (1.0f - d->parallaxY);
-        Color tint = WHITE;
-        tint.a = (unsigned char)(d->opacity * 255.0f + 0.5f);
-        DrawTexturePro(d->texture, d->src, dest, (Vector2){ 0, 0 }, 0.0f, tint);
-    }
+    // Behind-terrain props / imagelayers first.
+    // Parallax: Mode2D already subtracts viewPan, so we add pan * (1 - factor)
+    // here — net motion is pan * factor (0 = screen-locked).
+    DrawDecorsPass(lvl, viewPan, false);
+
+    // Day/night celestial bodies sit in the sky behind terrain and gameplay.
+    RenderCelestialCycle(lvl);
 
     // Soft crayon fill under collision so solids read even where terrain art is sparse.
     // Last 4 boxes are the off-canvas boundary walls — skip them.
@@ -1604,33 +2057,22 @@ void RenderTiledLevel(const TiledLevel *lvl, Vector2 viewPan)
     }
 
     double now = GetTime();
-    for (int y = 0; y < lvl->mapHeight; y++)
+    DrawTileGidLayer(lvl, lvl->terrainGids, tw, th, now);
+    for (int v = 0; v < lvl->visLayerCount; v++)
     {
-        for (int x = 0; x < lvl->mapWidth; x++)
-        {
-            int gid = lvl->terrainGids[y * lvl->mapWidth + x];
-            int tsIndex = -1;
-            int localId = -1;
-            // Unknown GIDs (e.g. skipped automap tilesets) are left blank.
-            if (!ResolveGid(lvl->tilesets, lvl->tilesetCount, gid, &tsIndex, &localId)) continue;
-
-            const TiledTileset *ts = &lvl->tilesets[tsIndex];
-            int drawId = ResolveAnimatedLocalId(ts, localId, now);
-            Texture2D tex = { 0 };
-            Rectangle src = { 0 };
-            if (!TilesetTileSource(ts, drawId, (int)tw, (int)th, &tex, &src)) continue;
-
-            Rectangle dest = {
-                lvl->offset.x + (float)x * tw * lvl->scale,
-                lvl->offset.y + (float)y * th * lvl->scale,
-                tw * lvl->scale, th * lvl->scale
-            };
-            DrawTexturePro(tex, src, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
-        }
+        DrawTileGidLayer(lvl, lvl->visGids[v], tw, th, now);
     }
+
+    // Object layer "art" — above terrain tiles, below zone overlays / gameplay.
+    DrawDecorsPass(lvl, viewPan, true);
 
     DrawZones(lvl->noBuild, lvl->noBuildCount, "no build", (Color){ 210, 50, 50, 255 });
     DrawZones(lvl->pits, lvl->pitCount, "pit", (Color){ 70, 50, 40, 255 });
     DrawZones(lvl->boosts, lvl->boostCount, "boost", (Color){ 40, 160, 220, 255 });
     DrawAntiGravityZones(lvl->antiGravity, lvl->antiGravityCount);
+}
+
+CelestialFrame TiledLevelGetCelestialFrame(void)
+{
+    return gCelestialFrame;
 }

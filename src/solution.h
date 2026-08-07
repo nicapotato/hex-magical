@@ -8,13 +8,15 @@
 *
 *   Text format (resources/solutions/<level>.solution), diffable and hand-editable:
 *
-*       version 2
+*       version 4
 *       level map-2.tmx
 *       tunables density=2.5 restitution=0.25 dropforce=0.0 boostrate=10000 boostmax=6000
 *       stroke 142.0,310.5 198.2,300.1 240.7,315.9
-*       stroke 300.0,400.0 350.0,390.0
-*       boost 120.0,500.0 180.0,470.0
+*       stroke 300.0,400.0 350.0,390.0 mask ff
 *       cannon 420.0,610.0 -1.5708
+*
+*   Optional `mask <hex>` after stroke points: bit i (LSB of first byte = segment 0)
+*   marks that segment as boosted. Omitted mask = no boost.
 *
 ********************************************************************************************/
 
@@ -25,16 +27,18 @@
 #include "raylib.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 
-#define SOLUTION_VERSION 3
+#define SOLUTION_VERSION 4
 #define SOLUTION_MAX_STROKES MAX_DRAWN_BODIES
-#define SOLUTION_MAX_BOOSTS MAX_BOOST_LINES
 #define SOLUTION_MAX_CANNONS MAX_CANNONS
 
 typedef struct SolutionStroke
 {
     Vector2 points[MAX_STROKE_POINTS]; // world space, post-smoothing
     int pointCount;
+    uint8_t boostSeg[MAX_STROKE_SEGS]; // per-segment boost (length pointCount-1)
+    bool hasBoostMask;                 // false = all zeros (mask token omitted)
 } SolutionStroke;
 
 typedef struct SolutionCannon
@@ -49,8 +53,6 @@ typedef struct Solution
     PhysicsTunables tunables; // physics knobs active when the solution was made
     SolutionStroke strokes[SOLUTION_MAX_STROKES];
     int strokeCount;
-    SolutionStroke boosts[SOLUTION_MAX_BOOSTS]; // boost line placements
-    int boostCount;
     SolutionCannon cannons[SOLUTION_MAX_CANNONS];
     int cannonCount;
 } Solution;

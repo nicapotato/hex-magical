@@ -13,8 +13,8 @@ int main(void)
     // Initialization
     //--------------------------------------------------------------------------------------
 #if !defined(PLATFORM_WEB)
-    // Borderless fullscreen by default; user can still resize after leaving that mode.
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_BORDERLESS_WINDOWED_MODE | FLAG_VSYNC_HINT);
+    // Windowed (not fullscreen): resizable, starts maximized to the monitor work area.
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
 #else
     // RESIZABLE lets raylib sync GetScreenWidth/Height to the browser/itch iframe
     // viewport so the aspect-following view fills the whole embed (see shell.html).
@@ -25,6 +25,7 @@ int main(void)
 
 #if !defined(PLATFORM_WEB)
     SetWindowMinSize(GAME_SCREEN_WIDTH / 2, GAME_SCREEN_HEIGHT / 2);
+    MaximizeWindow(); // fill available monitor space; stays windowed with chrome
 #endif
 
     GameInit();

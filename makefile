@@ -21,8 +21,8 @@ BUNDLE_RESOURCES_DIR := $(CONTENTS_DIR)/Resources
 HEX_MAGICAL_WORKFLOW := .github/workflows/hex-magical-cicd.yml
 PLATFORM ?= all
 REF ?= $(shell git branch --show-current 2>/dev/null)
-LEVEL_TESTS ?= true
-# Optional overrides: VERSION=0.0.2 CHANNEL=web LEVEL_TESTS=false
+LEVEL_TESTS ?= false
+# Optional overrides: VERSION=0.0.2 CHANNEL=web LEVEL_TESTS=true
 
 clean:
 	rm -rf $(BUILD_DIR) $(WASM_BUILD_DIR) $(ITCH_DIR) $(ITCH_ZIP) \
@@ -125,23 +125,22 @@ help:
 	@echo "  make release"
 	@echo "  make release REF=main"
 	@echo "  make ci PLATFORM=web"
-	@echo "  make hex-magical-ci LEVEL_TESTS=false"
+	@echo "  make hex-magical-ci LEVEL_TESTS=true"
 
 # Dispatch the CI workflow. Examples:
 #   make ci
 #   make ci PLATFORM=macos
 #   make ci PLATFORM=windows VERSION=0.0.2
-#   make hex-magical-ci LEVEL_TESTS=false   (skip the headless level-solution tests)
+#   make hex-magical-ci LEVEL_TESTS=true   (opt in to headless level-solution tests)
 # Requires: gh (https://cli.github.com/), authenticated (`gh auth login`).
-# run_level_tests is only sent when disabling it, so dispatching a REF branch
-# that predates the input still works.
+# LEVEL_TESTS defaults to false; pass true to enable run_level_tests.
 hex-magical-ci:
 	gh workflow run "$(HEX_MAGICAL_WORKFLOW)" \
 		$(if $(REF),-r "$(REF)",) \
 		-f build_platform="$(PLATFORM)" \
 		$(if $(VERSION),-f version="$(VERSION)",) \
 		$(if $(CHANNEL),-f channel="$(CHANNEL)",) \
-		$(if $(filter false,$(LEVEL_TESTS)),-f run_level_tests=false,)
+		-f run_level_tests="$(LEVEL_TESTS)"
 
 # Full release: build all platforms, publish itch.io + S3 + GitHub Release.
 # Creates git tag v<VERSION> from project.conf (or VERSION= override) via softprops/action-gh-release.
@@ -149,7 +148,7 @@ hex-magical-ci:
 #   make release
 #   make release REF=main
 #   make release VERSION=0.0.2
-#   make hex-magical-release LEVEL_TESTS=false   (release without level-solution tests)
+#   make hex-magical-release LEVEL_TESTS=true   (release with level-solution tests)
 hex-magical-release:
 	@V=$${VERSION:-$$(grep '^VERSION=' project.conf | cut -d= -f2)}; \
 		echo "🚀 Dispatching release for v$${V} (publish_gh_release=true → creates git tag)"; \
@@ -159,7 +158,7 @@ hex-magical-release:
 		-f publish_gh_release=true \
 		$(if $(VERSION),-f version="$(VERSION)",) \
 		$(if $(CHANNEL),-f channel="$(CHANNEL)",) \
-		$(if $(filter false,$(LEVEL_TESTS)),-f run_level_tests=false,)
+		-f run_level_tests="$(LEVEL_TESTS)"
 
 hex-magical-ci-watch: ci
 	@sleep 2
