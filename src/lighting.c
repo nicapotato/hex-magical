@@ -17,7 +17,9 @@ static int locDensity = -1;
 static int locWeight = -1;
 static bool ready = false;
 
-// GLSL ES 100 — radial shafts sampling the cloud mask toward the sun.
+// GLSL ES 100 — soft shafts from cloud mass toward the sun.
+// IMPORTANT: sample cloud alpha (not 1-a). Empty sky is uniform; treating it as
+// "open" washes the whole screen white under additive blend.
 static const char *GODRAY_FS =
     "#version 100\n"
     "precision mediump float;\n"
@@ -38,16 +40,15 @@ static const char *GODRAY_FS =
     "    {\n"
     "        texCoord -= delta;\n"
     "        float a = texture2D(texture0, texCoord).a;\n"
-    "        // Open sky contributes; cloud coverage blocks the shaft.\n"
-    "        illumination += (1.0 - a) * fall * weight;\n"
+    "        illumination += a * fall * weight;\n"
     "        fall *= 0.85;\n"
     "    }\n"
     "    float dist = length(fragTexCoord - sunPos);\n"
-    "    float glow = exp(-dist * 2.8) * 0.55;\n"
+    "    float glow = exp(-dist * 5.5) * 0.12;\n"
     "    float shaft = illumination * intensity;\n"
     "    vec3 warm = vec3(1.0, 0.93, 0.72);\n"
-    "    float alpha = clamp(shaft + glow * intensity, 0.0, 1.0);\n"
-    "    gl_FragColor = vec4(warm * alpha, alpha * 0.85);\n"
+    "    float alpha = clamp(shaft + glow * intensity, 0.0, 0.40);\n"
+    "    gl_FragColor = vec4(warm * alpha, alpha);\n"
     "}\n";
 
 void LightingInit(void)
@@ -115,6 +116,9 @@ void LightingApply(Vector2 sunScreen, float sunIntensity, float night)
 {
     if (!LightingReady()) return;
     if (sunIntensity < 0.02f) return;
+    if (sunIntensity > 1.0f) sunIntensity = 1.0f;
+    if (night < 0.0f) night = 0.0f;
+    if (night > 1.0f) night = 1.0f;
 
     float viewW = (float)cloudMask.texture.width;
     float viewH = (float)cloudMask.texture.height;
@@ -134,7 +138,6 @@ void LightingApply(Vector2 sunScreen, float sunIntensity, float night)
         float shadowDist = 28.0f + night * 10.0f;
         float ox = away.x * shadowDist;
         float oy = away.y * shadowDist;
-        // Peak brightness scaled to 70% of the original caps.
         unsigned char shadowA = (unsigned char)(sunIntensity * (0.196f - night * 0.056f) * 255.0f);
         Color shadowTint = { 20, 28, 48, shadowA };
         BeginBlendMode(BLEND_ALPHA);
@@ -146,30 +149,25 @@ void LightingApply(Vector2 sunScreen, float sunIntensity, float night)
         EndBlendMode();
     }
 
-    // Warm radial fill from the sun (additive). Avoid DrawCircleGradient — its
-    // signature changed between raylib 5.5 (x,y ints) and 6.0 (Vector2).
+    // Warm radial fill from the sun (additive). Single gradient only —
+    // stacked DrawCircleV rings washed the scene white under additive blend.
+    // raylib 6.0 API: DrawCircleGradient(Vector2, radius, inner, outer).
     {
-        float radius = fmaxf(viewW, viewH) * 0.85f;
-        float peakA = sunIntensity * 49.0f;
+        float radius = fmaxf(viewW, viewH) * 0.55f;
+        unsigned char a = (unsigned char)(sunIntensity * 16.0f);
         BeginBlendMode(BLEND_ADDITIVE);
-        for (int i = 0; i < 10; i++)
-        {
-            float t = (float)i / 10.0f; // 0 = outer, ~1 = inner
-            float falloff = (1.0f - t) * (1.0f - t);
-            unsigned char ca = (unsigned char)(peakA * falloff);
-            if (ca == 0) continue;
-            DrawCircleV(sunScreen, radius * (1.0f - t * 0.92f),
-                        (Color){ 255, 230, 160, ca });
-        }
+        DrawCircleGradient(sunScreen, radius,
+                           (Color){ 255, 230, 160, a },
+                           (Color){ 255, 200, 120, 0 });
         EndBlendMode();
     }
 
-    // God rays through cloud openings.
+    // Soft shafts scattered from cloud mass toward the sun.
     {
         float sunUv[2] = { sunScreen.x / viewW, 1.0f - sunScreen.y / viewH }; // RT Y-flip
-        float intensity = sunIntensity * (0.805f - night * 0.21f);
-        float density = 0.055f;
-        float weight = 0.196f;
+        float intensity = sunIntensity * (0.28f - night * 0.08f);
+        float density = 0.045f;
+        float weight = 0.08f;
         SetShaderValue(godRayShader, locSunPos, sunUv, SHADER_UNIFORM_VEC2);
         SetShaderValue(godRayShader, locIntensity, &intensity, SHADER_UNIFORM_FLOAT);
         SetShaderValue(godRayShader, locDensity, &density, SHADER_UNIFORM_FLOAT);

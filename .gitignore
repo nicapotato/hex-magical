@@ -67,9 +67,11 @@ compile_commands.json
 # Build folder
 build*
 bin/
+dist/
 external/
 hex-magical*
 resources.zip
+tools/cook-content/cook-content
 
 # Android files
 *apk*
