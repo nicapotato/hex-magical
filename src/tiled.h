@@ -16,6 +16,9 @@
 *     - Optional polygon/rect objects named "anti-gravity" with required custom
 *       property "gravity-angle" (float degrees): ball inside gets gravity rotated
 *       that many degrees clockwise from default down
+*     - Optional polygon object named "sun-track": closed sky path for a day/night
+*       cycle (sun travels one half, moon the other). Also enables drifting
+*       clouds. Sprites from resources/spritesheet/isolated/{sun,moon,cloud-1,cloud-2}.png.
 *     - Optional decorative tile objects / image layers (no physics):
 *         * Object layer "background" (or any name other than "art"): drawn behind terrain
 *         * Object layer "art": tile objects drawn above terrain (z above the tile layer)
@@ -49,6 +52,7 @@
 #define TILED_MAX_ANIMATED_TILES 32
 #define TILED_MAX_TILE_IMAGES 128 // per collection-of-images tileset
 #define TILED_MAX_DECORS 128      // background images / tile objects per map
+#define TILED_CLOUD_TEX_COUNT 2   // cloud-1.png, cloud-2.png
 
 // One tile's animation cycle from the .tsx (<animation>/<frame>).
 typedef struct TiledTileAnim
@@ -135,6 +139,13 @@ typedef struct TiledLevel
     int boostCount;
     GravityZone antiGravity[TILED_MAX_ZONES];
     int antiGravityCount;
+
+    // Optional day/night celestial path (act-3 map-1 pilot). Decorative only.
+    bool hasSunTrack;
+    PolyZone sunTrack;
+    Texture2D sunTex;
+    Texture2D moonTex;
+    Texture2D cloudTex[TILED_CLOUD_TEX_COUNT];
 
     TiledDecor decors[TILED_MAX_DECORS]; // prop images; aboveTerrain selects draw pass
     int decorCount;

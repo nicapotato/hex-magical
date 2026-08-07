@@ -174,6 +174,10 @@
                 "y": 230.30303030303037
             }
         },
+        "act-3/nature-sprites-2-medium.tsx": {
+            "dynamicWrapping": false,
+            "scaleInEditor": 1
+        },
         "act-3/tileset.tsx": {
             "dynamicWrapping": false,
             "scaleInDock": 1,
@@ -181,7 +185,8 @@
         },
         "background/images.tsx": {
             "dynamicWrapping": true,
-            "scaleInDock": 1
+            "scaleInDock": 1,
+            "scaleInEditor": 8
         },
         "experimental/16_tile_dualgrid_tilesheet-64x.tsx": {
             "dynamicWrapping": false,
@@ -194,6 +199,7 @@
             "scaleInEditor": 8
         },
         "experimental/bricks-small.tsx": {
+            "dynamicWrapping": false,
             "scaleInDock": 1,
             "scaleInEditor": 4
         },
@@ -244,18 +250,26 @@
                 "y": 159.81964796670422
             }
         },
+        "spritesheet/isolated/nature_large_010.ts": {
+            "dynamicWrapping": true,
+            "scaleInEditor": 8
+        },
         "tilesets/mountain.tsx": {
             "scaleInDock": 1,
             "scaleInEditor": 1
         }
     },
-    "last.imagePath": "/Users/nicapotato/Documents/repo/games/hex-magical/resources/spritesheet/isolated",
+    "last.imagePath": "/Users/nicapotato/Documents/repo/games/hex-magical/resources/spritesheet",
     "openFiles": [
         "act-2/map-9.tmx",
         "act-2/map-8.tmx"
     ],
     "project": "16_tile_dualgrid_tilesheet-64x-v2.tiled-project",
     "recentFiles": [
+        "experimental/5tileset-dualgrid-1.tsx",
+        "act-3/nature-sprites-2-medium.tsx",
+        "spritesheet/isolated/nature_large_010.ts",
+        "background/images.tsx",
         "act-2/map-9.tmx",
         "act-2/map-8.tmx",
         "act-2/map-3.tmx",
@@ -263,12 +277,12 @@
         "act-2/tileset.tsx",
         "act-3/map-1.tmx",
         "experimental/16_tile_dualgrid_tilesheet-64x.tsx",
-        "experimental/bricks-small.tsx",
-        "experimental/cave.tsx",
-        "experimental/cave-02.tmx",
-        "experimental/map-mountain-01.tmx",
-        "experimental/moebius-1-small.tsx"
+        "experimental/bricks-small.tsx"
     ],
     "tileset.lastUsedFormat": "tsx",
-    "tileset.type": 1
+    "tileset.tileSize": {
+        "height": 16,
+        "width": 16
+    },
+    "tileset.type": 0
 }

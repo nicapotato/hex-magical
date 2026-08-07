@@ -11,14 +11,18 @@
 #include "tiled.h"
 #include "game.h"
 
+#include <assert.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define WALL_THICKNESS 24.0f
-#define TILED_MAX_TILE_TYPES 512
+#define TILED_MAX_TILE_TYPES 2048 // atlas tile ids (nature-sprites-2-medium is 1408)
 #define TILED_MAX_SHAPES_PER_TILE 4
+#define CELESTIAL_PERIOD_SEC 48.0f // full day+night loop along sun-track
+#define CELESTIAL_SUN_TIME_FRAC (3.0f / 4.0f) // sun arc lasts 3× the moon arc
+#define CELESTIAL_CLOUD_COUNT 7   // concurrent drifting clouds on sun-track maps
 
 // Tiled global-tile-id flip flags (top 4 bits). See docs.mapeditor.org global-tile-ids.
 #define TILED_FLIPPED_HORIZONTALLY 0x80000000u
@@ -757,7 +761,8 @@ static bool IsGameplayObjectName(const char *name)
         || (strcmp(name, "no-build") == 0)
         || (strcmp(name, "pit") == 0)
         || (strcmp(name, "boost") == 0)
-        || (strcmp(name, "anti-gravity") == 0);
+        || (strcmp(name, "anti-gravity") == 0)
+        || (strcmp(name, "sun-track") == 0);
 }
 
 static bool ParseQuotedAttr(const char *tag, const char *attr, char *out, size_t outSize)
@@ -946,8 +951,14 @@ static bool LoadMapTilesets(const char *xml, const char *mapDir, TiledLevel *lvl
             && ParseIntAttr(tilesetTag, " columns=\"", &ts->columns)
             && ParseIntAttr(tilesetTag, " tilecount=\"", &ts->tileCount)
             && (ts->columns >= 0)
-            && (ts->tileCount > 0)
-            && (ts->tileCount <= TILED_MAX_TILE_TYPES);
+            && (ts->tileCount > 0);
+
+        if (ok && (ts->tileCount > TILED_MAX_TILE_TYPES))
+        {
+            TraceLog(LOG_ERROR, "TILED: tileset %s has %d tiles (max %d)",
+                     ts->tsxPath, ts->tileCount, TILED_MAX_TILE_TYPES);
+            ok = false;
+        }
 
         ts->imageCollection = (ts->columns == 0);
         if (ok && ts->imageCollection && (ts->tileCount > TILED_MAX_TILE_IMAGES))
@@ -1101,6 +1112,40 @@ static void UnloadLevelDecors(TiledLevel *lvl)
         lvl->decors[i].ownsTexture = false;
     }
     lvl->decorCount = 0;
+}
+
+static void UnloadCelestial(TiledLevel *lvl)
+{
+    if (lvl->sunTex.id != 0) UnloadTexture(lvl->sunTex);
+    if (lvl->moonTex.id != 0) UnloadTexture(lvl->moonTex);
+    lvl->sunTex = (Texture2D){ 0 };
+    lvl->moonTex = (Texture2D){ 0 };
+    for (int i = 0; i < TILED_CLOUD_TEX_COUNT; i++)
+    {
+        if (lvl->cloudTex[i].id != 0) UnloadTexture(lvl->cloudTex[i]);
+        lvl->cloudTex[i] = (Texture2D){ 0 };
+    }
+    lvl->hasSunTrack = false;
+    lvl->sunTrack = (PolyZone){ 0 };
+}
+
+// resources/<act>/map.tmx → resources/spritesheet/isolated/<name>.png
+static bool LoadCelestialTexture(const char *mapDir, const char *name, Texture2D *out)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/../spritesheet/isolated/%s.png", mapDir, name);
+    if (!IsWindowReady())
+    {
+        *out = (Texture2D){ 0 };
+        return true; // parse-only / headless — textures load once the window exists
+    }
+    *out = LoadTexture(path);
+    if (out->id == 0)
+    {
+        TraceLog(LOG_ERROR, "TILED: sun-track present but failed to load %s", path);
+        return false;
+    }
+    return true;
 }
 
 static bool PushDecor(TiledLevel *lvl, Texture2D texture, bool ownsTexture, bool aboveTerrain,
@@ -1395,6 +1440,22 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
         tmp.antiGravityCount = ParseGravityZones(xml, tmp.antiGravity, TILED_MAX_ZONES);
         if ((tmp.noBuildCount < 0) || (tmp.pitCount < 0) || (tmp.boostCount < 0)
             || (tmp.antiGravityCount < 0)) ok = false;
+
+        // Optional sun-track: at most one closed sky path for the day/night pilot.
+        if (ok)
+        {
+            PolyZone sunTracks[1] = { 0 };
+            int sunTrackCount = ParseZones(xml, "sun-track", sunTracks, 1);
+            if (sunTrackCount < 0)
+            {
+                ok = false;
+            }
+            else if (sunTrackCount == 1)
+            {
+                tmp.hasSunTrack = true;
+                tmp.sunTrack = sunTracks[0];
+            }
+        }
     }
 
     // External tilesets listed on the map (supports multi-tileset maps like map-11).
@@ -1421,6 +1482,13 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
         tmp.lineCapacity = lineCapacityTiles * (float)tmp.tileWidth * tmp.scale;
         tmp.boostLineCapacity = boostLineCapacityTiles * (float)tmp.tileWidth * tmp.scale;
         ok = ParseBackgroundDecors(xml, mapDir, &tmp);
+        if (ok && tmp.hasSunTrack)
+        {
+            ok = LoadCelestialTexture(mapDir, "sun", &tmp.sunTex)
+              && LoadCelestialTexture(mapDir, "moon", &tmp.moonTex)
+              && LoadCelestialTexture(mapDir, "cloud-1", &tmp.cloudTex[0])
+              && LoadCelestialTexture(mapDir, "cloud-2", &tmp.cloudTex[1]);
+        }
     }
 
     UnloadFileText(xml);
@@ -1428,6 +1496,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     {
         // LoadMapTilesets / ParseBackgroundDecors may have loaded textures before failing.
         tmp.loaded = true; // so UnloadLevelTilesets walks the partial list
+        UnloadCelestial(&tmp);
         UnloadLevelDecors(&tmp);
         UnloadLevelTilesets(&tmp);
         return false;
@@ -1455,6 +1524,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     if ((tmp.boxCount < 0) || (tmp.polygonCount < 0))
     {
         tmp.loaded = true;
+        UnloadCelestial(&tmp);
         UnloadLevelDecors(&tmp);
         UnloadLevelTilesets(&tmp);
         return false;
@@ -1463,6 +1533,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     {
         TraceLog(LOG_ERROR, "TILED: terrain layer has no tiles with TSX collision objects");
         tmp.loaded = true;
+        UnloadCelestial(&tmp);
         UnloadLevelDecors(&tmp);
         UnloadLevelTilesets(&tmp);
         return false;
@@ -1486,8 +1557,10 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     MapZonesToCanvas(tmp.pits, tmp.pitCount, tmp.scale, tmp.offset);
     MapZonesToCanvas(tmp.boosts, tmp.boostCount, tmp.scale, tmp.offset);
     MapGravityZonesToCanvas(tmp.antiGravity, tmp.antiGravityCount, tmp.scale, tmp.offset);
+    if (tmp.hasSunTrack) MapZonesToCanvas(&tmp.sunTrack, 1, tmp.scale, tmp.offset);
 
     // Commit: replace previous state (textures already live in tmp)
+    UnloadCelestial(lvl);
     UnloadLevelDecors(lvl);
     UnloadLevelTilesets(lvl);
     *lvl = tmp;
@@ -1517,15 +1590,17 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
 
     int animTiles = 0;
     for (int i = 0; i < lvl->tilesetCount; i++) animTiles += lvl->tilesets[i].animCount;
-    TraceLog(LOG_INFO, "TILED: loaded %s (%dx%d tiles, %d tilesets, %d animated, %d boxes, %d polygons, %d no-build, %d pits, %d boosts, %d anti-gravity, ink %.0f/%.0f px, %d cannons)",
+    TraceLog(LOG_INFO, "TILED: loaded %s (%dx%d tiles, %d tilesets, %d animated, %d boxes, %d polygons, %d no-build, %d pits, %d boosts, %d anti-gravity, sun-track %s, ink %.0f/%.0f px, %d cannons)",
              tmxPath, lvl->mapWidth, lvl->mapHeight, lvl->tilesetCount, animTiles, lvl->boxCount,
              lvl->polygonCount, lvl->noBuildCount, lvl->pitCount, lvl->boostCount, lvl->antiGravityCount,
+             lvl->hasSunTrack ? "yes" : "no",
              lvl->lineCapacity, lvl->boostLineCapacity, lvl->cannonCount);
     return true;
 }
 
 void TiledLevelUnload(TiledLevel *lvl)
 {
+    UnloadCelestial(lvl);
     UnloadLevelDecors(lvl);
     UnloadLevelTilesets(lvl);
     lvl->loaded = false;
@@ -1670,6 +1745,155 @@ static void DrawAntiGravityZones(const GravityZone *zones, int count)
     }
 }
 
+// Sample a closed polyline by normalized arc-length parameter u in [0, 1).
+static Vector2 PolyZoneSampleLoop(const PolyZone *zone, float u)
+{
+    assert(zone != NULL);
+    assert(zone->pointCount >= 2);
+
+    u -= floorf(u); // wrap to [0, 1)
+
+    float total = 0.0f;
+    float segLen[POLY_ZONE_MAX_POINTS];
+    for (int i = 0; i < zone->pointCount; i++)
+    {
+        Vector2 a = zone->points[i];
+        Vector2 b = zone->points[(i + 1) % zone->pointCount];
+        float dx = b.x - a.x;
+        float dy = b.y - a.y;
+        segLen[i] = sqrtf(dx * dx + dy * dy);
+        total += segLen[i];
+    }
+    assert(total > 0.0f);
+
+    float target = u * total;
+    for (int i = 0; i < zone->pointCount; i++)
+    {
+        bool last = (i == zone->pointCount - 1);
+        if ((target <= segLen[i]) || last)
+        {
+            float t = (segLen[i] > 0.0f) ? (target / segLen[i]) : 0.0f;
+            if (t > 1.0f) t = 1.0f;
+            Vector2 a = zone->points[i];
+            Vector2 b = zone->points[(i + 1) % zone->pointCount];
+            return (Vector2){ a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t };
+        }
+        target -= segLen[i];
+    }
+
+    return zone->points[0];
+}
+
+static void DrawCelestialBody(Texture2D tex, Vector2 center, float alpha)
+{
+    if ((tex.id == 0) || (alpha <= 0.01f)) return;
+    if (alpha > 1.0f) alpha = 1.0f;
+
+    Rectangle src = { 0.0f, 0.0f, (float)tex.width, (float)tex.height };
+    Rectangle dest = {
+        center.x - (float)tex.width * 0.5f,
+        center.y - (float)tex.height * 0.5f,
+        (float)tex.width,
+        (float)tex.height
+    };
+    Color tint = { 255, 255, 255, (unsigned char)(alpha * 255.0f) };
+    DrawTexturePro(tex, src, dest, (Vector2){ 0.0f, 0.0f }, 0.0f, tint);
+}
+
+// Horizontal drifting clouds in the sun-track sky band. Positions are time-driven
+// (no mutable spawn state) so hot-reload stays clean.
+static void RenderClouds(const TiledLevel *lvl, float night)
+{
+    assert(lvl->hasSunTrack);
+    assert(lvl->sunTrack.pointCount >= 3);
+
+    float skyTop = lvl->sunTrack.points[0].y;
+    float skyBot = lvl->sunTrack.points[0].y;
+    for (int i = 1; i < lvl->sunTrack.pointCount; i++)
+    {
+        float y = lvl->sunTrack.points[i].y;
+        if (y < skyTop) skyTop = y;
+        if (y > skyBot) skyBot = y;
+    }
+    float skyH = skyBot - skyTop;
+    if (skyH < 1.0f) return;
+
+    float mapLeft = lvl->offset.x;
+    float mapW = (float)(lvl->mapWidth * lvl->tileWidth) * lvl->scale;
+    // Dim slightly at night so clouds don't blow out the wash.
+    float alpha = 0.92f - night * 0.35f;
+    double now = GetTime();
+
+    for (int i = 0; i < CELESTIAL_CLOUD_COUNT; i++)
+    {
+        const Texture2D *tex = &lvl->cloudTex[i % TILED_CLOUD_TEX_COUNT];
+        if (tex->id == 0) continue;
+
+        // Stable per-cloud variation (not random — same look every run).
+        float speed = 14.0f + (float)((i * 11) % 18);          // px/sec, left→right
+        float yFrac = (float)((i * 37 + 13) % 100) / 100.0f;   // 0..1 in upper sky
+        float scale = 0.85f + (float)((i * 19) % 40) / 100.0f; // 0.85..1.25
+        float phase = (float)(i * 173);
+
+        float w = (float)tex->width * scale;
+        float h = (float)tex->height * scale;
+        float travel = mapW + w * 2.0f;
+        float x = mapLeft - w + (float)fmod(now * (double)speed + (double)phase, (double)travel);
+        // Keep clouds in the upper sky band (avoid hugging the horizon).
+        float y = skyTop + skyH * (0.08f + yFrac * 0.55f);
+
+        Rectangle src = { 0.0f, 0.0f, (float)tex->width, (float)tex->height };
+        Rectangle dest = { x, y - h * 0.5f, w, h };
+        Color tint = { 255, 255, 255, (unsigned char)(alpha * 255.0f) };
+        DrawTexturePro(*tex, src, dest, (Vector2){ 0.0f, 0.0f }, 0.0f, tint);
+    }
+}
+
+static void RenderCelestialCycle(const TiledLevel *lvl)
+{
+    if (!lvl->hasSunTrack || (lvl->sunTrack.pointCount < 3)) return;
+
+    // Time phase 0..1 over the full day+night. Path halves stay equal
+    // (day arc = first half of the polygon, night = second), but the sun
+    // spends CELESTIAL_SUN_TIME_FRAC of the period on its arc (3× the moon).
+    float t = (float)fmod(GetTime() / (double)CELESTIAL_PERIOD_SEC, 1.0);
+    if (t < 0.0f) t += 1.0f;
+
+    float pathU = 0.0f;
+    float sunAlpha = 0.0f;
+    float moonAlpha = 0.0f;
+    if (t < CELESTIAL_SUN_TIME_FRAC)
+    {
+        float local = t / CELESTIAL_SUN_TIME_FRAC; // 0..1 along day arc
+        pathU = local * 0.5f;
+        sunAlpha = sinf(local * (float)PI); // fade at both horizons
+    }
+    else
+    {
+        float local = (t - CELESTIAL_SUN_TIME_FRAC) / (1.0f - CELESTIAL_SUN_TIME_FRAC);
+        pathU = 0.5f + local * 0.5f;
+        moonAlpha = sinf(local * (float)PI);
+    }
+
+    Vector2 pos = PolyZoneSampleLoop(&lvl->sunTrack, pathU);
+
+    // Soft night wash when the sun is down — keeps gameplay readable.
+    float night = 1.0f - sunAlpha;
+    if (night > 0.02f)
+    {
+        float mapPxW = (float)(lvl->mapWidth * lvl->tileWidth) * lvl->scale;
+        float mapPxH = (float)(lvl->mapHeight * lvl->tileHeight) * lvl->scale;
+        Color wash = { 18, 28, 64, (unsigned char)(night * 55.0f) };
+        DrawRectangle((int)lvl->offset.x, (int)lvl->offset.y,
+                      (int)mapPxW, (int)mapPxH, wash);
+    }
+
+    DrawCelestialBody(lvl->sunTex, pos, sunAlpha);
+    DrawCelestialBody(lvl->moonTex, pos, moonAlpha);
+    // Clouds drift in front of the sun/moon (cartoony sky layering).
+    RenderClouds(lvl, night);
+}
+
 void RenderTiledLevel(const TiledLevel *lvl, Vector2 viewPan)
 {
     if (!lvl->loaded) return;
@@ -1681,6 +1905,9 @@ void RenderTiledLevel(const TiledLevel *lvl, Vector2 viewPan)
     // Parallax: Mode2D already subtracts viewPan, so we add pan * (1 - factor)
     // here — net motion is pan * factor (0 = screen-locked).
     DrawDecorsPass(lvl, viewPan, false);
+
+    // Day/night celestial bodies sit in the sky behind terrain and gameplay.
+    RenderCelestialCycle(lvl);
 
     // Soft crayon fill under collision so solids read even where terrain art is sparse.
     // Last 4 boxes are the off-canvas boundary walls — skip them.
