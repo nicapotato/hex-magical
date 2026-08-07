@@ -7,6 +7,7 @@
 #include "game.h"
 #include "admin.h"
 #include "levels.h"
+#include "lighting.h"
 #include "platform.h"
 #include "physics.h"
 #include "render.h"
@@ -134,6 +135,16 @@ int GameGetActLevel(int actIndex, int slot)
         if (tiledLevelActs[i] != act) continue;
         if (slot == 0) return i;
         slot--;
+    }
+    return 0;
+}
+
+// Default start: first map of act-3 (falls back to level 0 if that act is missing).
+static int GetDefaultLevelIndex(void)
+{
+    for (int a = 0; a < actCount; a++)
+    {
+        if (actNumbers[a] == 3) return GameGetActLevel(a, 0);
     }
     return 0;
 }
@@ -545,7 +556,7 @@ bool GameSetResourcesDir(const char *dir)
     }
 
     // Physics geometry points into the old registry slots — rebuild either way
-    levelIndex = 0;
+    levelIndex = GetDefaultLevelIndex();
     if (screen != SCREEN_TITLE) StartPlaying();
     return ok;
 }
@@ -555,7 +566,7 @@ static void AdvanceLevel(void)
     levelIndex++;
     if (levelIndex >= GameGetLevelCount())
     {
-        levelIndex = 0;
+        levelIndex = GetDefaultLevelIndex();
         screen = SCREEN_TITLE;
         PhysicsShutdown(&physics);
         return;
@@ -655,6 +666,8 @@ void GameInit(void)
 {
     target = LoadRenderTexture(GetDesiredViewWidth(), GAME_SCREEN_HEIGHT);
     SetTextureFilter(target.texture, TEXTURE_FILTER_BILINEAR);
+    LightingInit();
+    LightingEnsureSize(GetDesiredViewWidth(), GAME_SCREEN_HEIGHT);
     viewZoom = 1.0f;
     viewPan = (Vector2){ 0.0f, 0.0f };
 
@@ -693,12 +706,12 @@ void GameInit(void)
 
     PhysicsInit(&physics);
     SketchInit(&sketch);
-    screen = SCREEN_TITLE;
-    levelIndex = 0;
+    levelIndex = GetDefaultLevelIndex();
     debugMode = false;
     levelMenuOpen = false;
     actMenuOpen = false;
     howToPlayOpen = false;
+    StartPlaying(); // boot straight into the starting map (title via in-level menu)
 }
 
 void GameUpdateDrawFrame(void)
@@ -737,6 +750,7 @@ void GameUpdateDrawFrame(void)
         UnloadRenderTexture(target);
         target = LoadRenderTexture(desiredViewWidth, GAME_SCREEN_HEIGHT);
         SetTextureFilter(target.texture, TEXTURE_FILTER_BILINEAR);
+        LightingEnsureSize(desiredViewWidth, GAME_SCREEN_HEIGHT);
     }
 
     // Hold + / - (or keypad) to zoom the world view in and out
@@ -1121,6 +1135,26 @@ void GameUpdateDrawFrame(void)
 
             BeginMode2D(camera); // world space: pans/zooms, HUD below does not
                 RenderTiledLevel(GetTiledLevel(levelIndex), viewPan); // bg + tiles + zones
+            EndMode2D();
+
+            // Sun lighting: build a cloud occlusion mask, then composite god-rays /
+            // soft shadows / warm radial light onto the scenery (not gameplay ink).
+            CelestialFrame celestial = TiledLevelGetCelestialFrame();
+            if (celestial.active && LightingReady())
+            {
+                EndTextureMode(); // leave view target — mask is its own RT
+                LightingBeginCloudMask();
+                    BeginMode2D(camera);
+                        TiledLevelRenderCloudMask(GetTiledLevel(levelIndex));
+                    EndMode2D();
+                LightingEndCloudMask();
+                BeginTextureMode(target); // resume view target (contents preserved)
+
+                Vector2 sunScreen = GetWorldToScreen2D(celestial.bodyWorld, camera);
+                LightingApply(sunScreen, celestial.sunIntensity, celestial.night);
+            }
+
+            BeginMode2D(camera);
                 if (building) RenderGhostTrail(&physics);    // last run, build phase only
                 RenderPhysics(&physics);
                 RenderBoostOverlay(&physics);
@@ -1183,5 +1217,6 @@ void GameUnload(void)
 {
     for (int i = 0; i < tiledLevelCount; i++) TiledLevelUnload(&tiledLevels[i]);
     PhysicsShutdown(&physics);
+    LightingUnload();
     UnloadRenderTexture(target);
 }
