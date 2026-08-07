@@ -146,14 +146,21 @@ void LightingApply(Vector2 sunScreen, float sunIntensity, float night)
         EndBlendMode();
     }
 
-    // Warm radial fill from the sun (screen blend reads as light on terrain/decors).
+    // Warm radial fill from the sun (additive). Avoid DrawCircleGradient — its
+    // signature changed between raylib 5.5 (x,y ints) and 6.0 (Vector2).
     {
         float radius = fmaxf(viewW, viewH) * 0.85f;
-        unsigned char a = (unsigned char)(sunIntensity * 49.0f);
+        float peakA = sunIntensity * 49.0f;
         BeginBlendMode(BLEND_ADDITIVE);
-        DrawCircleGradient((int)sunScreen.x, (int)sunScreen.y, radius,
-                           (Color){ 255, 230, 160, a },
-                           (Color){ 255, 200, 120, 0 });
+        for (int i = 0; i < 10; i++)
+        {
+            float t = (float)i / 10.0f; // 0 = outer, ~1 = inner
+            float falloff = (1.0f - t) * (1.0f - t);
+            unsigned char ca = (unsigned char)(peakA * falloff);
+            if (ca == 0) continue;
+            DrawCircleV(sunScreen, radius * (1.0f - t * 0.92f),
+                        (Color){ 255, 230, 160, ca });
+        }
         EndBlendMode();
     }
 
