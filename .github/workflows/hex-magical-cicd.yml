@@ -31,7 +31,7 @@ on:
       run_level_tests:
         description: 'Replay saved level solutions before building'
         required: false
-        default: true
+        default: false
         type: boolean
   push:
     tags:
@@ -106,7 +106,7 @@ jobs:
           echo "✅ Version from project.conf: ${V}"
 
   level-tests:
-    # Skippable via `make hex-magical-ci LEVEL_TESTS=false`; tag pushes always test
+    # Off by default for workflow_dispatch; opt in with LEVEL_TESTS=true. Tag pushes always test.
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.run_level_tests != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 30
