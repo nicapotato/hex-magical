@@ -10,7 +10,8 @@ BOX2D_SRC = $(BOX2D_ROOT)/src
 BOX2D_INC = $(BOX2D_ROOT)/include
 SRC_DIR = src
 BUILD_DIR = bin/wasm
-RESOURCES_DIR = resources
+# Override with cooked tree: make -f Makefile.web RESOURCES_DIR=dist/content
+RESOURCES_DIR ?= resources
 SHELL_HTML = $(SRC_DIR)/platform/shell.html
 WEB_STORAGE_JS = $(SRC_DIR)/platform/web_storage.js
 
@@ -21,8 +22,8 @@ CFLAGS += -I$(SRC_DIR) -I$(RAYLIB_SRC) -I$(RAYLIB_SRC)/external
 CFLAGS += -I$(BOX2D_INC) -I$(BOX2D_SRC) -DBOX2D_DISABLE_SIMD -ffp-contract=off
 
 LDFLAGS = -L$(RAYLIB_SRC) -lraylib.web -lidbfs.js
-# 256MB: terrain + vis tile layers across the level registry need ~142MB static alone.
-LDFLAGS += -s USE_GLFW=3 -s WASM=1 -s TOTAL_MEMORY=256MB -s STACK_SIZE=1MB -s FORCE_FILESYSTEM=1 -s MINIFY_HTML=0
+# Lazy single-level residency: heap no longer needs ~128MB of static GID buffers.
+LDFLAGS += -s USE_GLFW=3 -s WASM=1 -s TOTAL_MEMORY=64MB -s STACK_SIZE=1MB -s FORCE_FILESYSTEM=1 -s MINIFY_HTML=0
 LDFLAGS += --preload-file $(RESOURCES_DIR)@/resources
 LDFLAGS += --pre-js $(WEB_STORAGE_JS)
 LDFLAGS += --shell-file $(SHELL_HTML)

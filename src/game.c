@@ -50,14 +50,22 @@ static Vector2 viewPan = { 0.0f, 0.0f }; // camera target offset from level cent
 #define VIEW_PAN_SPEED 480.0f // world pixels per second at 1x zoom
 
 #define MAX_TILED_LEVELS 64
-static TiledLevel tiledLevels[MAX_TILED_LEVELS] = { 0 };
+// Lightweight index — full TiledLevel (~textures + heap GIDs) is loaded on demand.
+typedef struct LevelEntry
+{
+    char tmxPath[512];
+    char name[64];
+    int act;
+} LevelEntry;
+static LevelEntry levelEntries[MAX_TILED_LEVELS] = { 0 };
 static int tiledLevelCount = 0;
+static TiledLevel activeLevel = { 0 };
+static int activeLevelIndex = -1;
 static float tiledWatchTimer = 0.0f;
 
 // Acts: levels live in resources/act-<n>/map-<m>.tmx — the act registry holds
 // the distinct act numbers found (ascending, since paths are naturally sorted).
 #define MAX_ACTS 16
-static int tiledLevelActs[MAX_TILED_LEVELS] = { 0 }; // act number per level slot
 static int actNumbers[MAX_ACTS] = { 0 };
 static int actCount = 0;
 
@@ -71,11 +79,31 @@ static Solution solutionScratch = { 0 };
 //----------------------------------------------------------------------------------
 // Local helpers
 //----------------------------------------------------------------------------------
-// Registry: every Tiled level found in resources/ (the only level source)
-static TiledLevel *GetTiledLevel(int index)
+// Load index into the single resident TiledLevel (unloads previous).
+static bool EnsureLevelLoaded(int index)
 {
     if ((index < 0) || (index >= tiledLevelCount)) index = 0;
-    return &tiledLevels[index];
+    if ((activeLevelIndex == index) && activeLevel.loaded) return true;
+
+    if (activeLevel.loaded) TiledLevelUnload(&activeLevel);
+    activeLevelIndex = -1;
+    if (!TiledLevelLoad(&activeLevel, levelEntries[index].tmxPath))
+    {
+        fprintf(stderr, "LEVEL: failed to load %s\n", levelEntries[index].tmxPath);
+        return false;
+    }
+    activeLevelIndex = index;
+    return true;
+}
+
+static TiledLevel *GetTiledLevel(int index)
+{
+    if (!EnsureLevelLoaded(index))
+    {
+        fprintf(stderr, "FATAL: cannot load level index %d\n", index);
+        abort();
+    }
+    return &activeLevel;
 }
 
 static const LevelDef *GetLevelDef(int index)
@@ -90,7 +118,8 @@ int GameGetLevelCount(void)
 
 const char *GameGetLevelName(int index)
 {
-    return GetLevelDef(index)->name;
+    if ((index < 0) || (index >= tiledLevelCount)) index = 0;
+    return levelEntries[index].name;
 }
 
 int GameGetActCount(void)
@@ -108,7 +137,7 @@ int GameGetActNumber(int actIndex)
 int GameGetLevelActIndex(int index)
 {
     if ((index < 0) || (index >= tiledLevelCount)) index = 0;
-    int act = tiledLevelActs[index];
+    int act = levelEntries[index].act;
     for (int i = 0; i < actCount; i++)
     {
         if (actNumbers[i] == act) return i;
@@ -122,7 +151,7 @@ int GameGetActLevelCount(int actIndex)
     int count = 0;
     for (int i = 0; i < tiledLevelCount; i++)
     {
-        if (tiledLevelActs[i] == act) count++;
+        if (levelEntries[i].act == act) count++;
     }
     return count;
 }
@@ -132,7 +161,7 @@ int GameGetActLevel(int actIndex, int slot)
     int act = GameGetActNumber(actIndex);
     for (int i = 0; i < tiledLevelCount; i++)
     {
-        if (tiledLevelActs[i] != act) continue;
+        if (levelEntries[i].act != act) continue;
         if (slot == 0) return i;
         slot--;
     }
@@ -211,8 +240,8 @@ static void RegisterAct(int act)
 
 // Scan a resources dir for levels — only act-<n>/map-<m>.tmx files count,
 // sorted numerically for a stable level order — act folders group naturally.
-// Each act folder carries its own tileset.tsx; anything off-convention
-// (map-template.tmx, experimental/, rules/ automap inputs) is ignored.
+// Validates each map once into a scratch level, then keeps only a path index
+// (one resident TiledLevel is loaded on demand while playing).
 static void LoadTiledLevels(const char *dir)
 {
     if (!DirectoryExists(dir)) return;
@@ -232,6 +261,7 @@ static void LoadTiledLevels(const char *dir)
         files.paths[j + 1] = key;
     }
 
+    static TiledLevel validateScratch = { 0 };
     for (unsigned int i = 0; (i < files.count) && (tiledLevelCount < MAX_TILED_LEVELS); i++)
     {
         int act = ParseActMapPath(files.paths[i]);
@@ -243,18 +273,18 @@ static void LoadTiledLevels(const char *dir)
 
         // Fail loud to stderr: platform.c sets LOG_NONE in release, which would
         // otherwise swallow TiledLevelLoad TraceLog errors and silently skip maps.
-        if (TiledLevelLoad(&tiledLevels[tiledLevelCount], files.paths[i]))
+        if (TiledLevelLoad(&validateScratch, files.paths[i]))
         {
-            tiledLevelActs[tiledLevelCount] = act;
+            LevelEntry *entry = &levelEntries[tiledLevelCount];
+            snprintf(entry->tmxPath, sizeof(entry->tmxPath), "%s", files.paths[i]);
+            snprintf(entry->name, sizeof(entry->name), "%s", validateScratch.name);
+            entry->act = act;
             RegisterAct(act);
-            fprintf(stderr, "LEVEL: loaded [%d] act-%d %s (%dx%d, %d bg)\n",
-                    tiledLevelCount,
-                    act,
-                    tiledLevels[tiledLevelCount].name,
-                    tiledLevels[tiledLevelCount].mapWidth,
-                    tiledLevels[tiledLevelCount].mapHeight,
-                    tiledLevels[tiledLevelCount].decorCount);
+            fprintf(stderr, "LEVEL: indexed [%d] act-%d %s (%dx%d)\n",
+                    tiledLevelCount, act, entry->name,
+                    validateScratch.mapWidth, validateScratch.mapHeight);
             tiledLevelCount++;
+            TiledLevelUnload(&validateScratch);
         }
         else
         {
@@ -532,7 +562,8 @@ bool GameSetResourcesDir(const char *dir)
     char previous[sizeof(resourcesDir)];
     snprintf(previous, sizeof(previous), "%s", resourcesDir);
 
-    for (int i = 0; i < tiledLevelCount; i++) TiledLevelUnload(&tiledLevels[i]);
+    if (activeLevel.loaded) TiledLevelUnload(&activeLevel);
+    activeLevelIndex = -1;
     tiledLevelCount = 0;
     actCount = 0;
 
@@ -718,17 +749,16 @@ void GameUpdateDrawFrame(void)
 {
     float dt = GetFrameTime();
 
-    // Hot reload: poll the .tmx files every half second; rebuild if saved from Tiled
+    // Hot reload: poll the active level every half second; rebuild if saved from Tiled
     tiledWatchTimer += dt;
-    if ((tiledLevelCount > 0) && (tiledWatchTimer >= 0.5f))
+    if ((tiledLevelCount > 0) && activeLevel.loaded && (tiledWatchTimer >= 0.5f))
     {
         tiledWatchTimer = 0.0f;
-        for (int i = 0; i < tiledLevelCount; i++)
+        if (TiledLevelFileChanged(&activeLevel))
         {
-            if (!TiledLevelFileChanged(&tiledLevels[i])) continue;
-            if (!TiledLevelLoad(&tiledLevels[i], tiledLevels[i].tmxPath)) continue;
-
-            if ((GetTiledLevel(levelIndex) == &tiledLevels[i]) && (screen != SCREEN_TITLE))
+            if (TiledLevelLoad(&activeLevel, activeLevel.tmxPath)
+                && (screen != SCREEN_TITLE)
+                && (activeLevelIndex == levelIndex))
             {
                 LoadCurrentLevel(); // rebuild physics against the edited geometry
             }
@@ -1215,7 +1245,8 @@ void GameUpdateDrawFrame(void)
 
 void GameUnload(void)
 {
-    for (int i = 0; i < tiledLevelCount; i++) TiledLevelUnload(&tiledLevels[i]);
+    if (activeLevel.loaded) TiledLevelUnload(&activeLevel);
+    activeLevelIndex = -1;
     PhysicsShutdown(&physics);
     LightingUnload();
     UnloadRenderTexture(target);

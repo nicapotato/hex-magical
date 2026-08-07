@@ -1,5 +1,5 @@
 .PHONY: clean build build-wasm run-mac run-wasm package-wasm app-bundle package-macos package-windows \
-	help ci ci-watch release release-watch test
+	help ci ci-watch release release-watch test cook-content
 
 BUILD_DIR := build
 PROJECT := hex-magical
@@ -10,6 +10,10 @@ BINARY_RELEASE := $(BUILD_DIR)/$(PROJECT)/Release/$(PROJECT)
 WASM_BUILD_DIR := bin/wasm
 ITCH_DIR := hex-magical
 ITCH_ZIP := hex-magical.zip
+
+# Cooked ship tree (dependency-trimmed). Dev builds still use resources/.
+CONTENT_DIR := dist/content
+COOK_BIN := tools/cook-content/cook-content
 
 APP_NAME := hex-magical
 APP_BUNDLE := $(APP_NAME).app
@@ -26,15 +30,23 @@ LEVEL_TESTS ?= false
 
 clean:
 	rm -rf $(BUILD_DIR) $(WASM_BUILD_DIR) $(ITCH_DIR) $(ITCH_ZIP) \
-		$(APP_BUNDLE) hex-magical-macos-arm64.zip hex-magical-windows-x86_64.zip release
+		$(APP_BUNDLE) hex-magical-macos-arm64.zip hex-magical-windows-x86_64.zip release \
+		$(CONTENT_DIR) $(COOK_BIN)
 	$(MAKE) -f Makefile.web clean
+
+# Fast C cook: playable maps + tileset/image deps + celestial sprites + solutions.
+cook-content: $(COOK_BIN)
+	$(COOK_BIN) resources $(CONTENT_DIR)
+
+$(COOK_BIN): tools/cook-content/main.c
+	$(CC) -O2 -std=c17 -Wall -Wextra -o $@ $<
 
 build:
 	cmake -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Release
 	cmake --build $(BUILD_DIR) --config Release -j
 
-build-wasm:
-	$(MAKE) -f Makefile.web all
+build-wasm: cook-content
+	$(MAKE) -f Makefile.web all RESOURCES_DIR=$(CONTENT_DIR)
 	rm -rf $(ITCH_DIR)
 	mkdir -p $(ITCH_DIR)
 	cp $(WASM_BUILD_DIR)/index.html $(WASM_BUILD_DIR)/index.js $(WASM_BUILD_DIR)/index.wasm $(WASM_BUILD_DIR)/index.data $(ITCH_DIR)/
@@ -42,8 +54,8 @@ build-wasm:
 	cd $(ITCH_DIR) && zip -r ../$(ITCH_ZIP) .
 	@echo "Itch package ready: $(ITCH_ZIP)"
 
-package-wasm:
-	$(MAKE) -f Makefile.web package
+package-wasm: cook-content
+	$(MAKE) -f Makefile.web package RESOURCES_DIR=$(CONTENT_DIR)
 
 # Resolve desktop binary path (single-config vs multi-config)
 define resolve_binary
@@ -54,7 +66,7 @@ $(shell if [ -f "$(BINARY)" ]; then echo "$(BINARY)"; \
 	else echo ""; fi)
 endef
 
-app-bundle: build
+app-bundle: build cook-content
 	@EXE="$(resolve_binary)"; \
 	if [ -z "$$EXE" ]; then echo "Error: binary not found after build"; exit 1; fi; \
 	echo "==== Creating macOS .app from $$EXE ===="; \
@@ -64,10 +76,8 @@ app-bundle: build
 	chmod +x "$(MACOS_DIR)/$(APP_NAME)"; \
 	cp src/platform/Info.plist "$(CONTENTS_DIR)/Info.plist"; \
 	if [ -f src/platform/raylib.icns ]; then cp src/platform/raylib.icns "$(BUNDLE_RESOURCES_DIR)/"; fi; \
-	if [ -d resources ]; then \
-		cp -R resources "$(CONTENTS_DIR)/resources"; \
-		cp -R resources "$(MACOS_DIR)/resources"; \
-	fi; \
+	# Next to the binary — GetApplicationDirectory()+resources (no Contents/resources duplicate).
+	cp -R "$(CONTENT_DIR)" "$(MACOS_DIR)/resources"; \
 	echo "✅ Created $(APP_BUNDLE)"
 
 package-macos: app-bundle
@@ -75,14 +85,14 @@ package-macos: app-bundle
 	zip -r hex-magical-macos-arm64.zip $(APP_BUNDLE)
 	@echo "✅ Package ready: hex-magical-macos-arm64.zip"
 
-package-windows: build
+package-windows: build cook-content
 	@EXE="$(resolve_binary)"; \
 	if [ -z "$$EXE" ]; then echo "Error: binary not found after build"; exit 1; fi; \
 	rm -rf release; \
 	mkdir -p release; \
 	cp "$$EXE" release/hex-magical.exe 2>/dev/null || cp "$$EXE" release/hex-magical; \
-	if [ ! -d resources ]; then echo "Error: resources/ directory missing"; exit 1; fi; \
-	cp -R resources release/resources; \
+	if [ ! -d "$(CONTENT_DIR)" ]; then echo "Error: $(CONTENT_DIR) missing — run make cook-content"; exit 1; fi; \
+	cp -R "$(CONTENT_DIR)" release/resources; \
 	if [ ! -f release/resources/act-1/map-2.tmx ]; then \
 		echo "Error: missing release/resources/act-1/map-2.tmx"; exit 1; \
 	fi; \
@@ -114,6 +124,7 @@ help:
 	@echo "hex-magical targets:"
 	@echo "  build / run-mac / build-wasm / run-wasm"
 	@echo "  test          - Replay saved solutions headlessly (level tests)"
+	@echo "  cook-content  - Trim resources/ → dist/content (C tool, for packages)"
 	@echo "  package-wasm / package-macos / package-windows / app-bundle"
 	@echo "  ci            - Dispatch CI (PLATFORM, VERSION, CHANNEL, REF)"
 	@echo "  ci-watch      - Dispatch CI and watch the run"

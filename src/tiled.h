@@ -135,9 +135,10 @@ typedef struct TiledLevel
     float boostLineCapacity;
     int cannonCount;
 
-    int terrainGids[TILED_MAX_W * TILED_MAX_H];
+    // Heap-sized to mapW*mapH (not the TILED_MAX_* caps) — freed on unload.
+    int *terrainGids;
     // Extra visual-only tile layers (terrain-2, sprites, …), document order.
-    int visGids[TILED_MAX_VIS_LAYERS][TILED_MAX_W * TILED_MAX_H];
+    int *visGids[TILED_MAX_VIS_LAYERS];
     char visLayerNames[TILED_MAX_VIS_LAYERS][32];
     int visLayerCount;
     TiledTileset tilesets[TILED_MAX_TILESETS];

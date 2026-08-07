@@ -1135,6 +1135,29 @@ static void UnloadCelestial(TiledLevel *lvl)
     lvl->cloudBand = (PolyZone){ 0 };
 }
 
+static void FreeLevelGids(TiledLevel *lvl)
+{
+    free(lvl->terrainGids);
+    lvl->terrainGids = NULL;
+    for (int i = 0; i < TILED_MAX_VIS_LAYERS; i++)
+    {
+        free(lvl->visGids[i]);
+        lvl->visGids[i] = NULL;
+    }
+    lvl->visLayerCount = 0;
+}
+
+static int *AllocGidLayer(int tileCount)
+{
+    assert(tileCount > 0);
+    int *gids = (int *)calloc((size_t)tileCount, sizeof(int));
+    if (gids == NULL)
+    {
+        TraceLog(LOG_ERROR, "TILED: out of memory allocating %d tile GIDs", tileCount);
+    }
+    return gids;
+}
+
 // Optional visual tile layers: any "terrain-*" (not the collision "terrain") or "sprites".
 static bool LoadVisualTileLayers(const char *xml, TiledLevel *tmp, int tileCount)
 {
@@ -1167,6 +1190,8 @@ static bool LoadVisualTileLayers(const char *xml, TiledLevel *tmp, int tileCount
         }
 
         int slot = tmp->visLayerCount;
+        tmp->visGids[slot] = AllocGidLayer(tileCount);
+        if (tmp->visGids[slot] == NULL) return false;
         if (!ParseTileLayer(xml, name, tmp->visGids[slot], tileCount)) return false;
         snprintf(tmp->visLayerNames[slot], sizeof(tmp->visLayerNames[slot]), "%s", name);
         tmp->visLayerCount++;
@@ -1449,6 +1474,11 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     }
 
     int tileCount = ok ? tmp.mapWidth * tmp.mapHeight : 0;
+    if (ok)
+    {
+        tmp.terrainGids = AllocGidLayer(tileCount);
+        ok = (tmp.terrainGids != NULL);
+    }
     ok = ok && ParseTileLayer(xml, "terrain", tmp.terrainGids, tileCount);
     ok = ok && LoadVisualTileLayers(xml, &tmp, tileCount);
 
@@ -1559,6 +1589,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     {
         // LoadMapTilesets / ParseBackgroundDecors may have loaded textures before failing.
         tmp.loaded = true; // so UnloadLevelTilesets walks the partial list
+        FreeLevelGids(&tmp);
         UnloadCelestial(&tmp);
         UnloadLevelDecors(&tmp);
         UnloadLevelTilesets(&tmp);
@@ -1587,6 +1618,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     if ((tmp.boxCount < 0) || (tmp.polygonCount < 0))
     {
         tmp.loaded = true;
+        FreeLevelGids(&tmp);
         UnloadCelestial(&tmp);
         UnloadLevelDecors(&tmp);
         UnloadLevelTilesets(&tmp);
@@ -1596,6 +1628,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     {
         TraceLog(LOG_ERROR, "TILED: terrain layer has no tiles with TSX collision objects");
         tmp.loaded = true;
+        FreeLevelGids(&tmp);
         UnloadCelestial(&tmp);
         UnloadLevelDecors(&tmp);
         UnloadLevelTilesets(&tmp);
@@ -1623,7 +1656,8 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
     if (tmp.hasSunTrack) MapZonesToCanvas(&tmp.sunTrack, 1, tmp.scale, tmp.offset);
     if (tmp.hasCloudBand) MapZonesToCanvas(&tmp.cloudBand, 1, tmp.scale, tmp.offset);
 
-    // Commit: replace previous state (textures already live in tmp)
+    // Commit: replace previous state (textures + GID heaps already live in tmp)
+    FreeLevelGids(lvl);
     UnloadCelestial(lvl);
     UnloadLevelDecors(lvl);
     UnloadLevelTilesets(lvl);
@@ -1664,6 +1698,7 @@ bool TiledLevelLoad(TiledLevel *lvl, const char *tmxPath)
 
 void TiledLevelUnload(TiledLevel *lvl)
 {
+    FreeLevelGids(lvl);
     UnloadCelestial(lvl);
     UnloadLevelDecors(lvl);
     UnloadLevelTilesets(lvl);
